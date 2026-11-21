@@ -71,10 +71,90 @@ static void set_err(char *err, size_t err_len, const char *msg) {
   }
 }
 
-/* PEM blobs travel through config.json -> CMake -> a C string literal. Depending
- * on the tool chain that produced them the newlines can arrive either as real
- * newlines or as a literal backslash-n sequence; mbedTLS only accepts the
- * former. Normalise both forms (and \r) before parsing. */
+/* Minimal base64 (std alphabet, padding optional) used to pull the DER body out
+ * of a PEM block when mbedTLS' PEM parser rejects the textual form (a missing
+ * trailing newline or stray CR is enough to make it fail with an ASN.1 error). */
+static int b64_decode(const char *in, size_t in_len, unsigned char *out, size_t *out_len) {
+  static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  uint32_t acc = 0;
+  int bits = 0;
+  size_t o = 0;
+  for (size_t i = 0; i < in_len; ++i) {
+    char c = in[i];
+    const char *p;
+    if (c == '\r' || c == '\n' || c == ' ' || c == '\t') {
+      continue;
+    }
+    if (c == '=') {
+      break;
+    }
+    p = strchr(tbl, c);
+    if (p == NULL) {
+      return -1;
+    }
+    acc = (acc << 6) | (uint32_t)(p - tbl);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      if (o >= *out_len) {
+        return -1;
+      }
+      out[o++] = (unsigned char)((acc >> bits) & 0xff);
+    }
+  }
+  *out_len = o;
+  return o > 0 ? 0 : -1;
+}
+
+/* Extracts the first certificate body from a PEM string into DER. */
+static int pem_to_der(const char *pem, unsigned char *der, size_t *der_len) {
+  const char *begin = strstr(pem, "-----BEGIN");
+  const char *body;
+  const char *end;
+  if (begin == NULL) {
+    return -1;
+  }
+  begin = strchr(begin, '\n');
+  if (begin == NULL) {
+    return -1;
+  }
+  body = begin + 1;
+  end = strstr(body, "-----END");
+  if (end == NULL) {
+    return -1;
+  }
+  return b64_decode(body, (size_t)(end - body), der, der_len);
+}
+
+/* Parses a certificate chain: mbedTLS PEM parser first, then a manual
+ * PEM->DER fallback. Returns the mbedTLS rc of the last attempt; *der_len
+ * reports how many DER bytes the fallback recovered (0 when it did not run). */
+static int parse_cert_chain(mbedtls_x509_crt *crt, const char *pem, size_t *der_len) {
+  int rc = mbedtls_x509_crt_parse(crt, (const unsigned char *)pem, strlen(pem) + 1);
+  if (der_len != NULL) {
+    *der_len = 0;
+  }
+  if (rc == 0) {
+    return 0;
+  }
+  {
+    unsigned char *der = (unsigned char *)malloc(strlen(pem) + 1);
+    size_t n = strlen(pem) + 1;
+    if (der != NULL) {
+      if (pem_to_der(pem, der, &n) == 0) {
+        if (der_len != NULL) {
+          *der_len = n;
+        }
+        mbedtls_x509_crt_init(crt);
+        if (mbedtls_x509_crt_parse_der(crt, der, n) == 0) {
+          rc = 0;
+        }
+      }
+      free(der);
+    }
+  }
+  return rc;
+}
 static char *normalize_pem(const char *pem) {
   size_t len;
   char *out;
@@ -220,6 +300,7 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
     char *cert = normalize_pem(cert_pem);
     char *key = normalize_pem(key_pem);
     int parse_rc;
+    size_t der_len = 0;
 
     if (ca == NULL || cert == NULL || key == NULL) {
       free(ca);
@@ -229,12 +310,16 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
       tls_free(conn);
       return -1;
     }
-    parse_rc = mbedtls_x509_crt_parse(&conn->ca, (const unsigned char *)ca, strlen(ca) + 1);
+    parse_rc = parse_cert_chain(&conn->ca, ca, &der_len);
     if (parse_rc != 0) {
       if (err != NULL) {
+        char detail[96];
+        mbedtls_strerror(parse_rc, detail, sizeof(detail));
         (void)snprintf(err, err_len,
-                       "tls: cannot parse CA certificate (rc=-0x%04x, %u bytes, starts '%.24s')",
-                       -parse_rc, (unsigned)strlen(ca), ca);
+                       "tls: cannot parse CA certificate (rc=-0x%04x %s, pem=%u bytes, "
+                       "der=%u bytes, has_end=%d, starts '%.24s')",
+                       -parse_rc, detail, (unsigned)strlen(ca), (unsigned)der_len,
+                       strstr(ca, "-----END") != NULL, ca);
       }
       free(ca);
       free(cert);
@@ -242,10 +327,14 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
       tls_free(conn);
       return -1;
     }
-    parse_rc = mbedtls_x509_crt_parse(&conn->cert, (const unsigned char *)cert, strlen(cert) + 1);
+    parse_rc = parse_cert_chain(&conn->cert, cert, &der_len);
     if (parse_rc != 0) {
       if (err != NULL) {
-        (void)snprintf(err, err_len, "tls: cannot parse client certificate (rc=-0x%04x)", -parse_rc);
+        char detail[96];
+        mbedtls_strerror(parse_rc, detail, sizeof(detail));
+        (void)snprintf(err, err_len,
+                       "tls: cannot parse client certificate (rc=-0x%04x %s, %u bytes)",
+                       -parse_rc, detail, (unsigned)strlen(cert));
       }
       free(ca);
       free(cert);
@@ -363,3 +452,4 @@ const char *sliver_tls_ciphersuite(sliver_tls_t *conn) {
 }
 
 void sliver_tls_close(sliver_tls_t *conn) { tls_free(conn); }
+
