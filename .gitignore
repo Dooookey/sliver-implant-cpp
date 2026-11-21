@@ -1,4 +1,6 @@
 build/
+# Visual Studio open-folder cache
+/.vs/
 *.obj
 *.o
 *.pdb
@@ -9,3 +11,4 @@ build/
 *.a
 *.lib
 !tests/**/*.a
+# Visual Studio cache /.vs/

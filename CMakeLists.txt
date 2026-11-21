@@ -9,6 +9,70 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 include(SliverOptions)
 include(SliverWarnings)
 
+option(IMPLANT_CRYPTO "Build the crypto layer (mbedTLS + monocypher)" ON)
+
+# ---------------------------------------------------------------------------
+# Crypto backend: mbedTLS 3.6 (TLS 1.3, SHA-256, HKDF, ChaCha20-Poly1305,
+# X25519) with a trimmed configuration, plus monocypher for Ed25519/BLAKE2b.
+# ---------------------------------------------------------------------------
+if(IMPLANT_CRYPTO)
+  set(MBEDTLS_DIR "${CMAKE_CURRENT_LIST_DIR}/third_party/mbedtls")
+  if(NOT EXISTS "${MBEDTLS_DIR}/library/ssl_debug_helpers_generated.c")
+    message(FATAL_ERROR
+      "third_party/mbedtls is missing or incomplete. It must be the official "
+      "mbedTLS 3.6.8 release tree (include/ + library/, which ships the "
+      "generated sources) so no Python/Perl code generation is required.")
+  endif()
+  # Compile the vendored mbedTLS directly: its own CMake would run config.py
+  # (Python + jsonschema) and driver-wrapper generation (Perl), which a payload
+  # build machine should not need. The release tree already contains the
+  # generated sources.
+  file(GLOB MBEDTLS_SOURCES CONFIGURE_DEPENDS "${MBEDTLS_DIR}/library/*.c")
+  add_library(mbedtls_vendor STATIC ${MBEDTLS_SOURCES})
+  target_include_directories(mbedtls_vendor
+    PUBLIC  "${MBEDTLS_DIR}/include"
+    PRIVATE "${MBEDTLS_DIR}/library")
+  target_compile_definitions(mbedtls_vendor PRIVATE
+    MBEDTLS_CONFIG_FILE="${CMAKE_CURRENT_LIST_DIR}/cmake/sliver_mbedtls_config.h")
+  # third-party code: no project warning policy
+  if(MSVC)
+    target_compile_options(mbedtls_vendor PRIVATE /W0)
+  else()
+    target_compile_options(mbedtls_vendor PRIVATE -w)
+  endif()
+  set_target_properties(mbedtls_vendor PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  if(WIN32)
+    # entropy_poll uses BCryptGenRandom
+    target_link_libraries(mbedtls_vendor PUBLIC bcrypt)
+  endif()
+
+  add_library(sliver_crypto STATIC
+    src/crypto/crypto_mbedtls.c
+    src/crypto/ed25519_blake2b.c
+    src/crypto/bech32.c
+    src/crypto/age.c
+    src/crypto/minisign.c
+    third_party/monocypher/monocypher.c
+    third_party/ed25519/add_scalar.c
+    third_party/ed25519/fe.c
+    third_party/ed25519/ge.c
+    third_party/ed25519/key_exchange.c
+    third_party/ed25519/keypair.c
+    third_party/ed25519/sc.c
+    third_party/ed25519/seed.c
+    third_party/ed25519/sha512.c
+    third_party/ed25519/sign.c
+    third_party/ed25519/verify.c
+  )
+  target_include_directories(sliver_crypto
+    PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include"
+    PRIVATE "${CMAKE_CURRENT_LIST_DIR}/third_party/monocypher"
+            "${CMAKE_CURRENT_LIST_DIR}/third_party/ed25519")
+  target_link_libraries(sliver_crypto PUBLIC mbedtls_vendor)
+  set_target_properties(sliver_crypto PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  sliver_apply_warnings(sliver_crypto)
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -60,6 +124,9 @@ target_include_directories(sliver_core
   PUBLIC  "${CMAKE_CURRENT_LIST_DIR}/include"
   PRIVATE "${SLIVER_GEN_DIR}")
 target_link_libraries(sliver_core PUBLIC Threads::Threads)
+if(IMPLANT_CRYPTO)
+  target_link_libraries(sliver_core PUBLIC sliver_crypto)
+endif()
 # PIC is required when the SHARED artifact links this static library.
 set_target_properties(sliver_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(WIN32)

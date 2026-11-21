@@ -52,8 +52,8 @@ static void print_config(void) {
 }
 
 static int run_smoke(void) {
-  smoke_state_t state;
-  sliver_thread_t *threads[4];
+  smoke_state_t state = {0};
+  sliver_thread_t *threads[4] = {0};
   int rc = 0;
 
   state.mutex = sliver_mutex_create();
