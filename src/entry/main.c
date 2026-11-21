@@ -573,6 +573,27 @@ int sliver_cli_main(int argc, char **argv) {
     return 0;
   }
 
+  /* --dump-ca [file]: prints the injected CA certificate so a broken
+   * injection can be inspected (public material only). */
+  if (argc > 1 && strcmp(argv[1], "--dump-ca") == 0) {
+    const char *ca = NULL;
+    char *owned = NULL;
+    if (argc > 2) {
+      owned = read_file(argv[2]);
+      ca = owned;
+    } else {
+      ca = sliver_config_secret(SLIVER_SECRET_MTLS_CA_CERT);
+    }
+    if (ca == NULL) {
+      (void)printf("no CA certificate\n");
+    } else {
+      (void)printf("--- ca begin (len=%u) ---\n%s\n--- ca end ---\n", (unsigned)strlen(ca), ca);
+    }
+    free(owned);
+    sliver_plat_cleanup();
+    return 0;
+  }
+
   if (sliver_config_self_check(err, sizeof(err)) != 0) {
     LOG_ERROR("invalid configuration: %s", err);
     (void)fprintf(stderr, "invalid configuration: %s\n", err);
