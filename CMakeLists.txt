@@ -123,7 +123,8 @@ if(IMPLANT_CRYPTO)
   list(APPEND SLIVER_CORE_SOURCES
     src/transport/tls_client.c
     src/proto/proto.c
-    src/wire/frame.c)
+    src/wire/frame.c
+    src/wire/yamux.c)
 endif()
 
 add_library(sliver_core STATIC ${SLIVER_CORE_SOURCES} "${SLIVER_GEN_DIR}/implant_secrets.c")
@@ -175,4 +176,5 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 

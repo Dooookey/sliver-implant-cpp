@@ -48,6 +48,21 @@ void sliver_buf_free(sliver_buf_t *b) {
   }
 }
 
+int sliver_buf_append(sliver_buf_t *b, const void *data, size_t len) {
+  if (b == NULL || (data == NULL && len != 0)) {
+    return -1;
+  }
+  if (len == 0) {
+    return 0;
+  }
+  if (buf_reserve(b, len) != 0) {
+    return -1;
+  }
+  memcpy(b->data + b->len, data, len);
+  b->len += len;
+  return 0;
+}
+
 int sliver_buf_put_varint(sliver_buf_t *b, uint64_t value) {
   uint8_t tmp[10];
   size_t n = 0;

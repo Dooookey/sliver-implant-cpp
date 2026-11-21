@@ -25,6 +25,8 @@ typedef struct {
 
 void sliver_buf_init(sliver_buf_t *b);
 void sliver_buf_free(sliver_buf_t *b);
+/* Appends raw bytes (no protobuf tag). */
+int sliver_buf_append(sliver_buf_t *b, const void *data, size_t len);
 int sliver_buf_put_varint(sliver_buf_t *b, uint64_t value);
 int sliver_buf_put_tag(sliver_buf_t *b, uint32_t field, uint32_t wire_type);
 int sliver_buf_put_bytes(sliver_buf_t *b, uint32_t field, const void *data, size_t len);

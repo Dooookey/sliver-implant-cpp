@@ -1,0 +1,331 @@
+/* src/wire/yamux.c - minimal client side of hashicorp/yamux. */
+#include "sliver/yamux.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#define YAMUX_VERSION 0u
+#define YAMUX_TYPE_DATA 0u
+#define YAMUX_TYPE_WINDOW_UPDATE 1u
+#define YAMUX_TYPE_PING 2u
+#define YAMUX_TYPE_GO_AWAY 3u
+
+#define YAMUX_FLAG_SYN 0x0001u
+#define YAMUX_FLAG_ACK 0x0002u
+#define YAMUX_FLAG_FIN 0x0004u
+#define YAMUX_FLAG_RST 0x0008u
+
+static void put_u16_be(uint8_t *p, uint16_t v) {
+  p[0] = (uint8_t)(v >> 8);
+  p[1] = (uint8_t)(v & 0xff);
+}
+
+static void put_u32_be(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)(v >> 24);
+  p[1] = (uint8_t)(v >> 16);
+  p[2] = (uint8_t)(v >> 8);
+  p[3] = (uint8_t)(v & 0xff);
+}
+
+static uint16_t get_u16_be(const uint8_t *p) {
+  return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
+}
+
+static uint32_t get_u32_be(const uint8_t *p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) |
+         (uint32_t)p[3];
+}
+
+static int io_read_full(sliver_yamux_t *y, void *buf, size_t len) {
+  size_t got = 0;
+  while (got < len) {
+    long n = y->read_fn(y->ctx, (uint8_t *)buf + got, len - got);
+    if (n <= 0) {
+      return -1;
+    }
+    got += (size_t)n;
+  }
+  return 0;
+}
+
+static int io_write_full(sliver_yamux_t *y, const void *buf, size_t len) {
+  size_t sent = 0;
+  while (sent < len) {
+    long n = y->write_fn(y->ctx, (const uint8_t *)buf + sent, len - sent);
+    if (n <= 0) {
+      return -1;
+    }
+    sent += (size_t)n;
+  }
+  return 0;
+}
+
+static int send_frame(sliver_yamux_t *y, uint8_t type, uint16_t flags, uint32_t stream_id,
+                      const void *payload, uint32_t length) {
+  uint8_t header[12];
+  header[0] = YAMUX_VERSION;
+  header[1] = type;
+  put_u16_be(header + 2, flags);
+  put_u32_be(header + 4, stream_id);
+  put_u32_be(header + 8, length);
+  if (io_write_full(y, header, sizeof(header)) != 0) {
+    return -1;
+  }
+  if (length != 0 && payload != NULL && io_write_full(y, payload, length) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static sliver_yamux_stream_t *find_stream(sliver_yamux_t *y, uint32_t id) {
+  for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
+    if (y->streams[i].used && y->streams[i].id == id) {
+      return &y->streams[i];
+    }
+  }
+  return NULL;
+}
+
+static sliver_yamux_stream_t *alloc_stream(sliver_yamux_t *y, uint32_t id) {
+  sliver_yamux_stream_t *s = find_stream(y, id);
+  if (s != NULL) {
+    return s;
+  }
+  for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
+    if (!y->streams[i].used) {
+      memset(&y->streams[i], 0, sizeof(y->streams[i]));
+      y->streams[i].used = 1;
+      y->streams[i].id = id;
+      y->streams[i].send_window = SLIVER_YAMUX_INITIAL_WINDOW;
+      sliver_buf_init(&y->streams[i].in);
+      return &y->streams[i];
+    }
+  }
+  return NULL;
+}
+
+int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
+                        sliver_io_write_fn write_fn, void *ctx) {
+  if (y == NULL || read_fn == NULL || write_fn == NULL) {
+    return -1;
+  }
+  memset(y, 0, sizeof(*y));
+  y->read_fn = read_fn;
+  y->write_fn = write_fn;
+  y->ctx = ctx;
+  y->next_stream_id = 2; /* clients use even ids */
+  return 0;
+}
+
+void sliver_yamux_free(sliver_yamux_t *y) {
+  if (y == NULL) {
+    return;
+  }
+  for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
+    if (y->streams[i].used) {
+      sliver_buf_free(&y->streams[i].in);
+    }
+  }
+}
+
+int sliver_yamux_open(sliver_yamux_t *y, uint32_t *stream_id) {
+  uint32_t id;
+  sliver_yamux_stream_t *s;
+  if (y == NULL || y->failed) {
+    return -1;
+  }
+  id = y->next_stream_id;
+  y->next_stream_id += 2;
+  s = alloc_stream(y, id);
+  if (s == NULL) {
+    return -1;
+  }
+  /* SYN window update carries the initial window size. */
+  if (send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_SYN, id, NULL,
+                 SLIVER_YAMUX_INITIAL_WINDOW) != 0) {
+    y->failed = 1;
+    return -1;
+  }
+  if (stream_id != NULL) {
+    *stream_id = id;
+  }
+  return 0;
+}
+
+static int replenish(sliver_yamux_t *y, uint32_t id, uint32_t consumed) {
+  return send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, 0, id, NULL, consumed);
+}
+
+int sliver_yamux_pump(sliver_yamux_t *y) {
+  uint8_t header[12];
+  uint8_t type;
+  uint16_t flags;
+  uint32_t id, length;
+
+  if (y == NULL || y->failed) {
+    return -1;
+  }
+  if (io_read_full(y, header, sizeof(header)) != 0) {
+    y->failed = 1;
+    return -1;
+  }
+  if (header[0] != YAMUX_VERSION) {
+    y->failed = 1;
+    return -1;
+  }
+  type = header[1];
+  flags = get_u16_be(header + 2);
+  id = get_u32_be(header + 4);
+  length = get_u32_be(header + 8);
+
+  switch (type) {
+    case YAMUX_TYPE_DATA: {
+      sliver_yamux_stream_t *s = find_stream(y, id);
+      uint8_t chunk[SLIVER_YAMUX_MAX_FRAME];
+      uint32_t remaining = length;
+      if (s == NULL) {
+        /* Unknown stream: drain the payload. */
+        while (remaining > 0) {
+          uint32_t n = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
+          if (io_read_full(y, chunk, n) != 0) {
+            y->failed = 1;
+            return -1;
+          }
+          remaining -= n;
+        }
+        return 0;
+      }
+      while (remaining > 0) {
+        uint32_t n = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
+        if (io_read_full(y, chunk, n) != 0) {
+          y->failed = 1;
+          return -1;
+        }
+        if (sliver_buf_append(&s->in, chunk, n) != 0) {
+          y->failed = 1;
+          return -1;
+        }
+        remaining -= n;
+      }
+      if ((flags & YAMUX_FLAG_FIN) != 0) {
+        s->fin_received = 1;
+      }
+      if (length != 0 && !s->fin_received) {
+        (void)replenish(y, id, length);
+      }
+      return 0;
+    }
+    case YAMUX_TYPE_WINDOW_UPDATE: {
+      sliver_yamux_stream_t *s = find_stream(y, id);
+      if ((flags & YAMUX_FLAG_SYN) != 0) {
+        /* Server initiated stream: acknowledge and remember it for accept. */
+        if (alloc_stream(y, id) != NULL) {
+          (void)send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_ACK, id, NULL, 0);
+          y->pending_accept = id;
+        }
+        return 0;
+      }
+      if (s != NULL) {
+        s->send_window += length;
+      }
+      return 0;
+    }
+    case YAMUX_TYPE_PING: {
+      if ((flags & YAMUX_FLAG_SYN) != 0) {
+        (void)send_frame(y, YAMUX_TYPE_PING, YAMUX_FLAG_ACK, 0, NULL, length);
+      }
+      return 0;
+    }
+    case YAMUX_TYPE_GO_AWAY:
+      y->go_away = 1;
+      return 0;
+    default:
+      /* Unknown frame: drain payload and continue. */
+      while (length > 0) {
+        uint8_t chunk[256];
+        uint32_t n = length > sizeof(chunk) ? (uint32_t)sizeof(chunk) : length;
+        if (io_read_full(y, chunk, n) != 0) {
+          y->failed = 1;
+          return -1;
+        }
+        length -= n;
+      }
+      return 0;
+  }
+}
+
+int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, size_t len) {
+  const uint8_t *p = (const uint8_t *)buf;
+  sliver_yamux_stream_t *s;
+  size_t sent = 0;
+
+  if (y == NULL || y->failed || (buf == NULL && len != 0)) {
+    return -1;
+  }
+  s = find_stream(y, stream_id);
+  if (s == NULL) {
+    return -1;
+  }
+  while (sent < len) {
+    size_t chunk;
+    if (s->send_window == 0) {
+      if (sliver_yamux_pump(y) != 0) {
+        return -1;
+      }
+      continue;
+    }
+    chunk = len - sent;
+    if (chunk > SLIVER_YAMUX_MAX_FRAME) {
+      chunk = SLIVER_YAMUX_MAX_FRAME;
+    }
+    if (chunk > s->send_window) {
+      chunk = s->send_window;
+    }
+    if (send_frame(y, YAMUX_TYPE_DATA, 0, stream_id, p + sent, (uint32_t)chunk) != 0) {
+      y->failed = 1;
+      return -1;
+    }
+    s->send_window -= (uint32_t)chunk;
+    sent += chunk;
+  }
+  return 0;
+}
+
+int sliver_yamux_close_write(sliver_yamux_t *y, uint32_t stream_id) {
+  if (y == NULL || y->failed || find_stream(y, stream_id) == NULL) {
+    return -1;
+  }
+  if (send_frame(y, YAMUX_TYPE_DATA, YAMUX_FLAG_FIN, stream_id, NULL, 0) != 0) {
+    y->failed = 1;
+    return -1;
+  }
+  return 0;
+}
+
+long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t len) {
+  sliver_yamux_stream_t *s;
+  size_t available;
+
+  if (y == NULL || buf == NULL || len == 0) {
+    return -1;
+  }
+  s = find_stream(y, stream_id);
+  if (s == NULL) {
+    return -1;
+  }
+  for (;;) {
+    available = s->in.len - s->in_off;
+    if (available > 0) {
+      size_t n = available < len ? available : len;
+      memcpy(buf, s->in.data + s->in_off, n);
+      s->in_off += n;
+      return (long)n;
+    }
+    if (s->fin_received) {
+      return 0;
+    }
+    if (sliver_yamux_pump(y) != 0) {
+      return -1;
+    }
+  }
+}

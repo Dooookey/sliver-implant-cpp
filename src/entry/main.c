@@ -9,9 +9,12 @@
 #include <string.h>
 
 #include "sliver/config.h"
+#include "sliver/frame.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
+#include "sliver/proto.h"
 #include "sliver/transport.h"
+#include "sliver/yamux.h"
 
 #define SLIVER_SMOKE_ITERATIONS 20000
 
@@ -205,6 +208,143 @@ out:
   return rc;
 }
 
+/* --yamux-selftest <host> <port> <age-priv> <server.pub>
+ *
+ * Plain-TCP yamux interop check: writes the MUX/1 preface, opens a stream,
+ * sends a signed Envelope{Ping} and verifies the signed reply. This covers the
+ * layers above TLS without needing a Sliver server. */
+typedef struct {
+  sliver_yamux_t *y;
+  uint32_t stream_id;
+  int failed;
+} yamux_bridge_t;
+
+static long sock_read_cb(void *ctx, void *buf, size_t len) {
+  return sliver_socket_recv((sliver_socket_t *)ctx, buf, len);
+}
+
+static long sock_write_cb(void *ctx, const void *buf, size_t len) {
+  return sliver_socket_send((sliver_socket_t *)ctx, buf, len);
+}
+
+static long yamux_bridge_read(void *ctx, void *buf, size_t len) {
+  yamux_bridge_t *b = (yamux_bridge_t *)ctx;
+  long n = sliver_yamux_read(b->y, b->stream_id, buf, len);
+  if (n < 0) {
+    b->failed = 1;
+  }
+  return n;
+}
+
+static long yamux_bridge_write(void *ctx, const void *buf, size_t len) {
+  yamux_bridge_t *b = (yamux_bridge_t *)ctx;
+  if (sliver_yamux_write(b->y, b->stream_id, buf, len) != 0) {
+    b->failed = 1;
+    return -1;
+  }
+  return (long)len;
+}
+
+static int run_yamux_selftest(int argc, char **argv) {
+  const char *host, *age_priv, *pub_path;
+  uint16_t port;
+  sliver_socket_t *sock = NULL;
+  sliver_yamux_t yamux;
+  yamux_bridge_t bridge;
+  sliver_frame_signer_t signer;
+  sliver_buf_t ping, envelope, reply;
+  sliver_envelope_t env;
+  char *pub_text;
+  int32_t nonce = 0;
+  uint32_t sid = 0;
+  int rc = 1;
+
+  if (argc < 6) {
+    (void)fprintf(stderr,
+                  "usage: %s --yamux-selftest <host> <port> <age-priv> <server.pub>\n",
+                  argv[0]);
+    return 2;
+  }
+  host = argv[2];
+  port = (uint16_t)strtoul(argv[3], NULL, 10);
+  age_priv = argv[4];
+  pub_path = argv[5];
+
+  pub_text = read_file(pub_path);
+  if (pub_text == NULL) {
+    (void)fprintf(stderr, "cannot read %s\n", pub_path);
+    return 2;
+  }
+  if (sliver_frame_signer_init(&signer, age_priv) != 0) {
+    (void)fprintf(stderr, "signer init failed\n");
+    free(pub_text);
+    return 2;
+  }
+
+  sock = sliver_tcp_connect(host, port);
+  if (sock == NULL) {
+    (void)fprintf(stderr, "tcp connect failed\n");
+    free(pub_text);
+    return 1;
+  }
+  if (sliver_socket_send(sock, SLIVER_YAMUX_PREFACE, SLIVER_YAMUX_PREFACE_LEN) !=
+      SLIVER_YAMUX_PREFACE_LEN) {
+    (void)fprintf(stderr, "MUX/1 write failed\n");
+    goto out_sock;
+  }
+  if (sliver_yamux_client(&yamux, sock_read_cb, sock_write_cb, sock) != 0) {
+    goto out_sock;
+  }
+  if (sliver_yamux_open(&yamux, &sid) != 0) {
+    (void)fprintf(stderr, "yamux open failed\n");
+    goto out_yamux;
+  }
+  bridge.y = &yamux;
+  bridge.stream_id = sid;
+  bridge.failed = 0;
+
+  sliver_buf_init(&ping);
+  sliver_buf_init(&envelope);
+  sliver_buf_init(&reply);
+  if (sliver_ping_encode(&ping, 31337) != 0 ||
+      sliver_envelope_encode(&envelope, 0, SLIVER_MSG_PING, ping.data, ping.len) != 0) {
+    (void)fprintf(stderr, "envelope encode failed\n");
+    goto out_bufs;
+  }
+  if (sliver_frame_write(&signer, yamux_bridge_write, &bridge, envelope.data, envelope.len) != 0) {
+    (void)fprintf(stderr, "frame write failed\n");
+    goto out_bufs;
+  }
+  (void)sliver_yamux_close_write(&yamux, sid);
+
+  if (sliver_frame_read(pub_text, yamux_bridge_read, &bridge, &reply) != 0) {
+    (void)fprintf(stderr, "reply frame read/verify failed (bridge_failed=%d, got=%u)\n",
+                  bridge.failed, (unsigned)reply.len);
+    goto out_bufs;
+  }
+  if (sliver_envelope_decode(reply.data, reply.len, &env) != 0) {
+    (void)fprintf(stderr, "reply envelope decode failed\n");
+    goto out_bufs;
+  }
+  (void)printf("yamux ok: stream=%u reply type=%u", sid, env.type);
+  if (env.type == SLIVER_MSG_PING && sliver_ping_decode_nonce(env.data, env.data_len, &nonce) == 0) {
+    (void)printf(" nonce=%d", nonce);
+  }
+  (void)printf("\n");
+  rc = 0;
+
+out_bufs:
+  sliver_buf_free(&reply);
+  sliver_buf_free(&envelope);
+  sliver_buf_free(&ping);
+out_yamux:
+  sliver_yamux_free(&yamux);
+out_sock:
+  sliver_socket_close(sock);
+  free(pub_text);
+  return rc;
+}
+
 int sliver_cli_main(int argc, char **argv) {
   char err[128];
 
@@ -230,6 +370,11 @@ int sliver_cli_main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--tls-selftest") == 0) {
     int rc = run_tls_selftest(argc, argv);
+    sliver_plat_cleanup();
+    return rc;
+  }
+  if (argc > 1 && strcmp(argv[1], "--yamux-selftest") == 0) {
+    int rc = run_yamux_selftest(argc, argv);
     sliver_plat_cleanup();
     return rc;
   }
