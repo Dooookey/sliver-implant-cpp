@@ -116,10 +116,12 @@ message(STATUS "sliver build seed: ${SLIVER_BUILD_SEED}")
 set(SLIVER_CORE_SOURCES
   src/core/config.c
   src/core/log.c
+  src/core/fileio.c
   src/platform/${SLIVER_PLATFORM_DIR}/thread.c
   src/platform/${SLIVER_PLATFORM_DIR}/net.c
   src/platform/${SLIVER_PLATFORM_DIR}/fs.c
   src/platform/${SLIVER_PLATFORM_DIR}/proc.c
+  src/platform/${SLIVER_PLATFORM_DIR}/exec.c
 )
 if(IMPLANT_CRYPTO)
   list(APPEND SLIVER_CORE_SOURCES
@@ -183,6 +185,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 

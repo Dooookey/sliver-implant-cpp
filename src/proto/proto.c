@@ -705,3 +705,191 @@ int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t c
 
 
 
+
+/* --- Download / Upload -------------------------------------------------- */
+
+int sliver_download_req_decode(const void *data, size_t len, sliver_download_req_t *out) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL) {
+    return -1;
+  }
+  memset(out, 0, sizeof(*out));
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, out->path, sizeof(out->path)) != 0) {
+        return -1;
+      }
+    } else if (wire == 0 && (field == 2 || field == 3 || field == 5 || field == 6 || field == 4)) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      if (field == 2) {
+        out->start = (int64_t)v;
+      } else if (field == 3) {
+        out->stop = (int64_t)v;
+      } else if (field == 4) {
+        out->recursive = v != 0;
+      } else if (field == 5) {
+        out->max_bytes = (int64_t)v;
+      } else {
+        out->max_lines = (int64_t)v;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_download_encode(sliver_buf_t *out, const char *path, int exists, int64_t start,
+                           int64_t stop, const void *data, size_t data_len, int is_dir,
+                           const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, path != NULL ? path : "") != 0) {
+    return -1;
+  }
+  if (exists && sliver_buf_put_bool(out, 3, 1) != 0) {
+    return -1;
+  }
+  if (start != 0 && sliver_buf_put_int64(out, 4, start) != 0) {
+    return -1;
+  }
+  if (stop != 0 && sliver_buf_put_int64(out, 5, stop) != 0) {
+    return -1;
+  }
+  if (data != NULL && data_len != 0 && sliver_buf_put_bytes(out, 6, data, data_len) != 0) {
+    return -1;
+  }
+  if (is_dir && sliver_buf_put_bool(out, 7, 1) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+int sliver_upload_req_decode(const void *data, size_t len, sliver_upload_req_t *out) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL) {
+    return -1;
+  }
+  memset(out, 0, sizeof(*out));
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, out->path, sizeof(out->path)) != 0) {
+        return -1;
+      }
+    } else if (field == 3 && wire == 2) {
+      const uint8_t *p;
+      size_t n;
+      if (sliver_reader_bytes(&r, &p, &n) != 0) {
+        return -1;
+      }
+      out->data = p;
+      out->data_len = n;
+    } else if (field == 5 && wire == 2) {
+      if (sliver_reader_string(&r, out->file_name, sizeof(out->file_name)) != 0) {
+        return -1;
+      }
+    } else if (field == 7 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      out->overwrite = v != 0;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_upload_encode(sliver_buf_t *out, const char *path, int written, int failed,
+                         const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, path != NULL ? path : "") != 0) {
+    return -1;
+  }
+  if (sliver_buf_put_int32(out, 2, written) != 0) {
+    return -1;
+  }
+  if (failed != 0 && sliver_buf_put_int32(out, 3, failed) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+/* --- Execute ------------------------------------------------------------ */
+
+int sliver_execute_req_decode(const void *data, size_t len, sliver_execute_req_t *out) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL) {
+    return -1;
+  }
+  memset(out, 0, sizeof(*out));
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, out->path, sizeof(out->path)) != 0) {
+        return -1;
+      }
+    } else if (field == 2 && wire == 2 && out->argc < SLIVER_EXEC_MAX_ARGS) {
+      if (sliver_reader_string(&r, out->args[out->argc], sizeof(out->args[0])) != 0) {
+        return -1;
+      }
+      out->argc++;
+    } else if (field == 3 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      out->output = v != 0;
+    } else if (field == 8 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      out->background = v != 0;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout_data,
+                          size_t stdout_len, const void *stderr_data, size_t stderr_len,
+                          uint32_t pid, const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_uint32(out, 1, status) != 0) {
+    return -1;
+  }
+  if (stdout_data != NULL && stdout_len != 0 &&
+      sliver_buf_put_bytes(out, 2, stdout_data, stdout_len) != 0) {
+    return -1;
+  }
+  if (stderr_data != NULL && stderr_len != 0 &&
+      sliver_buf_put_bytes(out, 3, stderr_data, stderr_len) != 0) {
+    return -1;
+  }
+  if (pid != 0 && sliver_buf_put_uint32(out, 4, pid) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}

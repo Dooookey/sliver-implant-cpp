@@ -33,6 +33,15 @@ int sliver_fs_mkdir(const char *path);
 /* Removes a file or directory. recursive walks subdirectories; force ignores
  * read-only/permission quirks where the platform allows it. */
 int sliver_fs_remove(const char *path, int recursive, int force);
+
+/* --- chunked file IO (download/upload) ---------------------------------- */
+#include "sliver/proto.h"
+
+/* Appends up to max bytes starting at `start` to `out`. */
+int sliver_fs_read_chunk(const char *path, int64_t start, int64_t max, sliver_buf_t *out);
+/* Appends data to path; `overwrite` truncates the file first. */
+int sliver_fs_write_chunk(const char *path, const void *data, size_t len, int overwrite);
+int64_t sliver_fs_size(const char *path);
 /* Expands a possibly relative path to absolute form (best effort). */
 int sliver_fs_abspath(const char *path, char *buf, size_t cap);
 

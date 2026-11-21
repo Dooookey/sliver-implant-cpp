@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sliver/proto.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,6 +35,12 @@ int sliver_proc_terminate(int32_t pid, int force);
 
 int sliver_env_list(sliver_env_t **out, size_t *count);
 void sliver_env_free(sliver_env_t *vars);
+
+/* Runs `path` with `args`, capturing stdout/stderr when capture != 0.
+ * Blocks until the child exits (60s cap on Windows). */
+int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
+                     sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
+                     uint32_t *status_out);
 
 #ifdef __cplusplus
 }

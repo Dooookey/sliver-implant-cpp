@@ -37,6 +37,9 @@ int sliver_rpc_handle_mkdir(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_rpc_handle_ps(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_rpc_handle_terminate(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_rpc_handle_env(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_download(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_upload(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_execute(const sliver_envelope_t *req, sliver_buf_t *out);
 
 #ifdef __cplusplus
 }

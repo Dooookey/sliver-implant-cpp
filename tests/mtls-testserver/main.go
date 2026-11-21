@@ -428,9 +428,46 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		fmt.Printf("RM ok: path=%q\n", string(rb[1]))
 	}
 
+	// Upload -> Download -> Execute roundtrip. Absolute paths: the implant's CWD
+	// is whatever directory the test process started in.
+	wd, _ := os.Getwd()
+	tmpFile := filepath.Join(wd, "build", "rpc-upload.txt")
+	_ = os.MkdirAll(filepath.Join(wd, "build"), 0o755)
+	_ = os.Remove(tmpFile)
+	payload := []byte("hello rpc\n")
+	upReq := append(protoStr(1, tmpFile), protoStrBytes(3, payload)...)
+	if _, upBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 49, 9, upReq, 10); err != nil {
+		log.Printf("upload failed: %v", err)
+	} else {
+		v, _ := envelopeFields(upBody[3])
+		_, ub := envelopeFields(upBody[3])
+		_, ur := envelopeFields(ub[9])
+		fmt.Printf("UPLOAD ok: written=%d bytes-on-disk=%d err=%q\n", v[2], fileSize(tmpFile), string(ur[1]))
+	}
+	dlReq := protoStr(1, tmpFile)
+	if _, dlBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 50, 7, dlReq, 8); err != nil {
+		log.Printf("download failed: %v", err)
+	} else {
+		_, db := envelopeFields(dlBody[3])
+		fmt.Printf("DOWNLOAD ok: exists=%v bytes=%d payload=%q\n",
+			string(db[6]) == string(payload), len(db[6]), string(db[6]))
+	}
+	cmdExe := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	exReq := append(protoStr(1, cmdExe), protoStr(2, "/c")...)
+	exReq = append(exReq, protoStr(2, "echo hi")...)
+	exReq = append(exReq, 0x18, 0x01) // Output = true
+	if _, exBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 51, 44, exReq, 44); err != nil {
+		log.Printf("execute failed: %v", err)
+	} else {
+		ev, eb := envelopeFields(exBody[3])
+		fmt.Printf("EXECUTE ok: status=%d pid=%d stdout=%q stderr=%q\n",
+			ev[1], ev[4], string(eb[2]), string(eb[3]))
+	}
+	_ = os.Remove(tmpFile)
+
 	// Server initiated stream with a message type the implant does not implement
-	// (MsgExecuteReq=44): it must answer Envelope{ID, UnknownMessageType:true}.
-	unknown := []byte{0x08, 0xb9, 0x60, 0x10, 0x2c, 0x1a, 0x01, 0x78}
+	// (MsgType 200): it must answer Envelope{ID, UnknownMessageType:true}.
+	unknown := []byte{0x08, 0xb9, 0x60, 0x10, 0xc8, 0x01, 0x1a, 0x01, 0x78}
 	if _, resp, err := rawExchange(sess, serverPriv, serverPub, clientPub, unknown); err != nil {
 		log.Printf("unknown-type roundtrip failed: %v", err)
 	} else {
@@ -616,5 +653,30 @@ func rawExchange(sess *yamux.Session, priv ed25519.PrivateKey, pub, clientPub ed
 	respStream.Close()
 	return v, resp, nil
 }
+
+
+
+func protoStrBytes(field uint64, data []byte) []byte {
+	out := appendUvarint(nil, field<<3|2)
+	out = appendUvarint(out, uint64(len(data)))
+	return append(out, data...)
+}
+
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return fi.Size()
+}
+
+func firstByte(b []byte) int {
+	if len(b) == 0 {
+		return 0
+	}
+	return int(b[0])
+}
+
+
 
 

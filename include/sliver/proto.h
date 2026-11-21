@@ -165,6 +165,56 @@ typedef struct {
 int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t count,
                       const char *err);
 
+/* --- Download / Upload -------------------------------------------------- */
+#define SLIVER_DOWNLOAD_CHUNK (64 * 1024)
+
+typedef struct {
+  char path[1024];
+  int64_t start;
+  int64_t stop;
+  int64_t max_bytes;
+  int64_t max_lines;
+  int recursive;
+} sliver_download_req_t;
+
+typedef struct {
+  char path[1024];
+  const void *data;
+  size_t data_len;
+  int overwrite;
+  char file_name[256];
+} sliver_upload_req_t;
+
+/* DownloadReq{Path=1,Start=2,Stop=3,Recurse=4,MaxBytes=5,MaxLines=6}. */
+int sliver_download_req_decode(const void *data, size_t len, sliver_download_req_t *out);
+/* Download{Path=1,Encoder=2,Exists=3,Start=4,Stop=5,Data=6,IsDir=7,Response=9}. */
+int sliver_download_encode(sliver_buf_t *out, const char *path, int exists, int64_t start,
+                           int64_t stop, const void *data, size_t data_len, int is_dir,
+                           const char *err);
+/* UploadReq{Path=1,Encoder=2,Data=3,IsIOC=4,FileName=5,IsDirectory=6,Overwrite=7}. */
+int sliver_upload_req_decode(const void *data, size_t len, sliver_upload_req_t *out);
+/* Upload{Path=1,WrittenFiles=2,UnwriteableFiles=3,Response=9}. */
+int sliver_upload_encode(sliver_buf_t *out, const char *path, int written, int failed,
+                         const char *err);
+
+/* --- Execute ------------------------------------------------------------ */
+#define SLIVER_EXEC_MAX_ARGS 32
+
+typedef struct {
+  char path[1024];
+  char args[SLIVER_EXEC_MAX_ARGS][512];
+  size_t argc;
+  int output;
+  int background;
+} sliver_execute_req_t;
+
+/* ExecuteReq{Path=1,Args=2,Output=3,EnvInheritance=6,Background=8}. */
+int sliver_execute_req_decode(const void *data, size_t len, sliver_execute_req_t *out);
+/* Execute{Status=1,Stdout=2,Stderr=3,Pid=4,Response=9}. */
+int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout_data,
+                          size_t stdout_len, const void *stderr_data, size_t stderr_len,
+                          uint32_t pid, const char *err);
+
 /* --- message type ids (protobuf/sliverpb/constants.go, append only) ---- */
 #define SLIVER_MSG_REGISTER 1u
 #define SLIVER_MSG_PING 3u
@@ -183,6 +233,11 @@ int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t c
 #define SLIVER_MSG_TERMINATE 46u
 #define SLIVER_MSG_ENV_REQ 66u
 #define SLIVER_MSG_ENV 67u
+#define SLIVER_MSG_DOWNLOAD_REQ 7u
+#define SLIVER_MSG_DOWNLOAD 8u
+#define SLIVER_MSG_UPLOAD_REQ 9u
+#define SLIVER_MSG_UPLOAD 10u
+#define SLIVER_MSG_EXECUTE_REQ 44u
 #define SLIVER_MSG_BEACON_REGISTER 93u
 #define SLIVER_MSG_BEACON_TASKS 94u
 
