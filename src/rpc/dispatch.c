@@ -321,6 +321,10 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_DOWNLOAD_REQ, SLIVER_MSG_DOWNLOAD, sliver_rpc_handle_download},
     {SLIVER_MSG_UPLOAD_REQ, SLIVER_MSG_UPLOAD, sliver_rpc_handle_upload},
     {SLIVER_MSG_EXECUTE_REQ, SLIVER_MSG_EXECUTE_REQ, sliver_rpc_handle_execute},
+    {SLIVER_MSG_SHELL_REQ, SLIVER_MSG_SHELL, sliver_rpc_handle_shell},
+    {SLIVER_MSG_TUNNEL_DATA, 0, sliver_rpc_handle_tunnel_data},
+    {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
+    {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
 };
 
 void sliver_rpc_result_free(sliver_rpc_result_t *result) {
@@ -348,17 +352,23 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     if (g_handlers[i].req_type != req->type) {
       continue;
     }
-    if (g_handlers[i].fn(req, &result->message) == 0) {
+    {
+      int hrc = g_handlers[i].fn(req, &result->message);
       result->handled = 1;
-      result->resp_type = g_handlers[i].resp_type;
-    } else {
-      /* Handler failed: answer with an empty response carrying the type so the
-       * client sees a protocol error instead of a timeout. */
-      sliver_buf_free(&result->message);
-      sliver_buf_init(&result->message);
-      result->handled = 1;
-      result->resp_type = g_handlers[i].resp_type;
-      LOG_ERROR("rpc: handler for type %u failed", req->type);
+      if (hrc == -2) {
+        /* Handler replied (or deliberately stayed silent) itself. */
+        result->no_response = 1;
+        result->resp_type = 0;
+        sliver_buf_free(&result->message);
+        sliver_buf_init(&result->message);
+      } else if (hrc == 0) {
+        result->resp_type = g_handlers[i].resp_type;
+      } else {
+        LOG_ERROR("rpc: handler for type %u failed", req->type);
+        result->resp_type = g_handlers[i].resp_type;
+        sliver_buf_free(&result->message);
+        sliver_buf_init(&result->message);
+      }
     }
     return;
   }

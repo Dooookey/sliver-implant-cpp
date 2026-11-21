@@ -42,6 +42,18 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
                      sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
                      uint32_t *status_out);
 
+/* --- interactive child (shell tunnels) ---------------------------------- */
+typedef struct sliver_child sliver_child_t;
+
+int sliver_child_spawn(const char *path, const char *const *args, size_t argc,
+                       sliver_child_t **out, uint32_t *pid_out);
+long sliver_child_write(sliver_child_t *c, const void *buf, size_t len);
+long sliver_child_read(sliver_child_t *c, void *buf, size_t len);
+void sliver_child_close_stdin(sliver_child_t *c);
+int sliver_child_wait(sliver_child_t *c, uint32_t *status_out);
+void sliver_child_terminate(sliver_child_t *c);
+void sliver_child_free(sliver_child_t *c);
+
 #ifdef __cplusplus
 }
 #endif

