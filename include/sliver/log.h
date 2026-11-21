@@ -19,6 +19,10 @@ typedef enum {
 
 void sliver_log_set_level(sliver_log_level_t level);
 sliver_log_level_t sliver_log_get_level(void);
+/* Mirrors log output into a file (append). Returns 0 on success.
+ * Needed for GUI-subsystem builds where stderr goes nowhere. */
+int sliver_log_set_file(const char *path);
+void sliver_log_close_file(void);
 void sliver_log_write(sliver_log_level_t level, const char *fmt, ...);
 
 #define LOG_INFO(...)  sliver_log_write(SLIVER_LOG_INFO, __VA_ARGS__)

@@ -142,7 +142,7 @@ if(WIN32)
   target_link_libraries(sliver_core PUBLIC ws2_32)
 endif()
 sliver_apply_warnings(sliver_core)
-target_compile_definitions(sliver_core PRIVATE
+target_compile_definitions(sliver_core PRIVATE _CRT_SECURE_NO_WARNINGS
   SLIVER_BUILD_SEED="${SLIVER_BUILD_SEED}"
   $<$<BOOL:${WIN32}>:_WIN32_WINNT=0x0601;WIN32_LEAN_AND_MEAN;NOMINMAX>)
 
@@ -177,6 +177,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 

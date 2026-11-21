@@ -1,4 +1,4 @@
-﻿# inject-config-selftest.ps1 - prove that generate-cpp style config injection
+# inject-config-selftest.ps1 - prove that generate-cpp style config injection
 # produces a self-contained implant: config.json -> implant_secrets.c -> the
 # binary connects with NO command line arguments.
 #
@@ -6,7 +6,8 @@
 param(
   [int]$Port = 9448,
   [string]$Address = "127.0.0.1",
-  [string]$AgePriv = "AGE-SECRET-KEY-1TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST"
+  [string]$AgePriv = "AGE-SECRET-KEY-1TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST",
+  [switch]$Gui
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,6 +92,24 @@ try {
   & $exe 2>&1 | ForEach-Object { Write-Host $_ }
   $rc = $LASTEXITCODE
   $ErrorActionPreference = "Stop"
+
+  if ($Gui) {
+    Write-Host "==> GUI subsystem variant (no console, logs to %TEMP%\sliver-implant.log)"
+    $guiWork = Join-Path $root "build\injected-gui"
+    & cmake -S $root -B $guiWork -G "Visual Studio 17 2022" -A x64 `
+        "-DSLIVER_CONFIG_JSON=$configPath" -DIMPLANT_FORMAT=exe -DIMPLANT_GUI=ON -DBUILD_TESTING=OFF
+    if ($LASTEXITCODE -ne 0) { throw "cmake configure (gui) failed" }
+    & cmake --build $guiWork --config Release
+    if ($LASTEXITCODE -ne 0) { throw "cmake build (gui) failed" }
+
+    $guiExe = Join-Path $guiWork "bin\implant.exe"
+    $logPath = Join-Path ([IO.Path]::GetTempPath()) "sliver-implant.log"
+    Write-Host "    artifact: $guiExe ($((Get-Item $guiExe).Length) bytes)"
+    Write-Host "    GUI builds attach to the parent console and log to $logPath"
+    Write-Host "    run it manually (SmartScreen/AV may prompt for unsigned binaries):"
+    Write-Host "      Unblock-File '$guiExe'"
+    Write-Host "      & '$guiExe'"
+  }
 } finally {
   if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
 }

