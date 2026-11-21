@@ -62,6 +62,8 @@ int sliver_yamux_close_write(sliver_yamux_t *y, uint32_t stream_id);
 long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t len);
 /* Pumps one incoming frame (used by blocking helpers and by the session loop). */
 int sliver_yamux_pump(sliver_yamux_t *y);
+/* Blocks until the peer opens a stream; returns 0 and its id on success. */
+int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id);
 
 #ifdef __cplusplus
 }

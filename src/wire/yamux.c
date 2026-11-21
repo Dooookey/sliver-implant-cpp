@@ -302,6 +302,23 @@ int sliver_yamux_close_write(sliver_yamux_t *y, uint32_t stream_id) {
   return 0;
 }
 
+int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
+  if (y == NULL || stream_id == NULL) {
+    return -1;
+  }
+  while (y->pending_accept == 0) {
+    if (y->failed || y->go_away) {
+      return -1;
+    }
+    if (sliver_yamux_pump(y) != 0) {
+      return -1;
+    }
+  }
+  *stream_id = y->pending_accept;
+  y->pending_accept = 0;
+  return 0;
+}
+
 long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t len) {
   sliver_yamux_stream_t *s;
   size_t available;

@@ -83,3 +83,31 @@ void sliver_socket_close(sliver_socket_t *s) {
   (void)close(s->fd);
   free(s);
 }
+
+/* --- identity helpers --------------------------------------------------- */
+#include <stdio.h>
+
+int sliver_hostname(char *buf, size_t cap) {
+  if (buf == NULL || cap == 0) {
+    return -1;
+  }
+  if (gethostname(buf, cap) != 0) {
+    return -1;
+  }
+  buf[cap - 1] = '\0';
+  return 0;
+}
+
+int sliver_username(char *buf, size_t cap) {
+  const char *user = getenv("USER");
+  if (user == NULL) {
+    user = getenv("LOGNAME");
+  }
+  if (buf == NULL || cap == 0 || user == NULL) {
+    return -1;
+  }
+  (void)snprintf(buf, cap, "%s", user);
+  return 0;
+}
+
+unsigned sliver_current_pid(void) { return (unsigned)getpid(); }

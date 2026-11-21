@@ -44,6 +44,11 @@ long sliver_socket_send(sliver_socket_t *s, const void *buf, size_t len);
 long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len);
 void sliver_socket_close(sliver_socket_t *s);
 
+/* --- identity helpers --------------------------------------------------- */
+int sliver_hostname(char *buf, size_t cap);
+int sliver_username(char *buf, size_t cap);
+unsigned sliver_current_pid(void);
+
 #ifdef __cplusplus
 }
 #endif
