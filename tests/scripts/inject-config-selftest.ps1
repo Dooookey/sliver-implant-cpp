@@ -1,4 +1,4 @@
-# inject-config-selftest.ps1 - prove that generate-cpp style config injection
+﻿# inject-config-selftest.ps1 - prove that generate-cpp style config injection
 # produces a self-contained implant: config.json -> implant_secrets.c -> the
 # binary connects with NO command line arguments.
 #
@@ -7,7 +7,8 @@ param(
   [int]$Port = 9448,
   [string]$Address = "127.0.0.1",
   [string]$AgePriv = "AGE-SECRET-KEY-1TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST",
-  [switch]$Gui
+  [switch]$Gui,
+  [switch]$EmptyBuildId
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,7 +45,7 @@ try {
   Write-Host "==> writing the build configuration (this is what GenerateCpp emits)"
   $config = @{
     name                   = "injected-implant"
-    build_id               = "inject-selftest"
+    build_id               = $(if ($EmptyBuildId) { "" } else { "inject-selftest" })
     strategy               = "s"
     beacon                 = $false
     poll_timeout           = 0
@@ -120,4 +121,5 @@ Get-Content (Join-Path $root "build\inject-server.err") -ErrorAction SilentlyCon
 
 if ($rc -ne 0) { throw "injected-config selftest failed (exit $rc)" }
 Write-Host "==> injected-config selftest passed (no arguments, config baked in)"
+
 

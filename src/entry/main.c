@@ -396,7 +396,9 @@ static int run_mtls_session(int argc, char **argv) {
   if (sliver_username(username, sizeof(username)) == 0) {
     (void)snprintf(reg.username, sizeof(reg.username), "%s", username);
   }
-  (void)snprintf(reg.uuid, sizeof(reg.uuid), "%s", sliver_config_build_id());
+  (void)snprintf(reg.uuid, sizeof(reg.uuid), "%s",
+                 sliver_config_build_id()[0] != '\0' ? sliver_config_build_id()
+                                                     : sliver_config_name());
   (void)snprintf(reg.os, sizeof(reg.os), "%s",
 #if defined(_WIN32)
                  "windows"
@@ -409,7 +411,9 @@ static int run_mtls_session(int argc, char **argv) {
   (void)snprintf(reg.filename, sizeof(reg.filename), "%s", argv[0]);
   (void)snprintf(reg.version, sizeof(reg.version), "%s", "1.7.8");
   reg.reconnect_interval = sliver_config_reconnect_interval_ns();
-  (void)snprintf(reg.config_id, sizeof(reg.config_id), "%s", sliver_config_build_id());
+  (void)snprintf(reg.config_id, sizeof(reg.config_id), "%s",
+                 sliver_config_build_id()[0] != '\0' ? sliver_config_build_id()
+                                                     : sliver_config_name());
   (void)snprintf(reg.locale, sizeof(reg.locale), "%s", "en-US");
   cfg.reg = reg;
 
@@ -475,7 +479,9 @@ static int run_from_build_config(const char *argv0) {
   if (sliver_username(username, sizeof(username)) == 0) {
     (void)snprintf(reg.username, sizeof(reg.username), "%s", username);
   }
-  (void)snprintf(reg.uuid, sizeof(reg.uuid), "%s", sliver_config_build_id());
+  (void)snprintf(reg.uuid, sizeof(reg.uuid), "%s",
+                 sliver_config_build_id()[0] != '\0' ? sliver_config_build_id()
+                                                     : sliver_config_name());
   (void)snprintf(reg.os, sizeof(reg.os), "%s",
 #if defined(_WIN32)
                  "windows"
@@ -488,7 +494,9 @@ static int run_from_build_config(const char *argv0) {
   (void)snprintf(reg.filename, sizeof(reg.filename), "%s", argv0 != NULL ? argv0 : "");
   (void)snprintf(reg.version, sizeof(reg.version), "%s", "1.7.8");
   reg.reconnect_interval = sliver_config_reconnect_interval_ns();
-  (void)snprintf(reg.config_id, sizeof(reg.config_id), "%s", sliver_config_build_id());
+  (void)snprintf(reg.config_id, sizeof(reg.config_id), "%s",
+                 sliver_config_build_id()[0] != '\0' ? sliver_config_build_id()
+                                                     : sliver_config_name());
   (void)snprintf(reg.locale, sizeof(reg.locale), "%s", "en-US");
   cfg.reg = reg;
 

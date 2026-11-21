@@ -64,10 +64,9 @@ int sliver_config_self_check(char *err, size_t err_len) {
     set_err(err, err_len, "implant name is empty");
     return -1;
   }
-  if (sliver_config_build_id() == NULL || sliver_config_build_id()[0] == '\0') {
-    set_err(err, err_len, "build id is empty");
-    return -1;
-  }
+  /* The build id is informational (config_id/reporting). Upstream assigns the
+   * ImplantBuild UUID only after the artifact exists, so an empty value is
+   * legitimate at build time - do not fail the implant over it. */
   if (sliver_config_c2_count() == 0) {
     set_err(err, err_len, "no c2 endpoint configured");
     return -1;
