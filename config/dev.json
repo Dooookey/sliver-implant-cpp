@@ -1,0 +1,11 @@
+{
+  "name": "sliver-implant-dev",
+  "build_id": "dev-local",
+  "strategy": "s",
+  "reconnect_interval_ns": 60000000000,
+  "beacon_interval_ns": 60000000000,
+  "beacon_jitter_ns": 0,
+  "max_connection_errors": 1000,
+  "features": { "mtls": true, "http": false, "dns": false, "wg": false, "pivot": false },
+  "c2": [ "mtls://127.0.0.1:8888" ]
+}

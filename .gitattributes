@@ -1,0 +1,6 @@
+# Keep sources LF regardless of core.autocrlf on Windows checkouts.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.dll binary
+*.exe binary

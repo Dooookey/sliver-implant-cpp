@@ -1,0 +1,11 @@
+build/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+!tests/**/*.a

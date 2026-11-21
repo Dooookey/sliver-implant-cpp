@@ -1,0 +1,72 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "ON",
+        "SLIVER_CONFIG_JSON": "${sourceDir}/config/dev.json"
+      }
+    },
+    {
+      "name": "msvc-x64",
+      "displayName": "MSVC 2022 x64 (Visual Studio generator, no vcvars needed)",
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": { "IMPLANT_FORMAT": "exe" }
+    },
+    {
+      "name": "msvc-x64-dll",
+      "displayName": "MSVC 2022 x64 shared library",
+      "inherits": "msvc-x64",
+      "binaryDir": "${sourceDir}/build/msvc-x64-dll",
+      "cacheVariables": { "IMPLANT_FORMAT": "shared" }
+    },
+    {
+      "name": "mingw-x64",
+      "displayName": "MinGW-w64 x86_64 (cross, from WSL)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/windows-mingw.cmake"
+    },
+    {
+      "name": "clang-cl-x64",
+      "displayName": "clang-cl x64 (Windows)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/windows-clang-cl.cmake"
+    },
+    {
+      "name": "wsl-gcc",
+      "displayName": "Linux gcc (WSL)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": { "CMAKE_C_COMPILER": "gcc" }
+    },
+    {
+      "name": "wsl-clang",
+      "displayName": "Linux clang (WSL)",
+      "inherits": "wsl-gcc",
+      "binaryDir": "${sourceDir}/build/wsl-clang",
+      "cacheVariables": { "CMAKE_C_COMPILER": "clang" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "msvc-x64", "configurePreset": "msvc-x64", "configuration": "Release" },
+    { "name": "msvc-x64-dll", "configurePreset": "msvc-x64-dll", "configuration": "Release" },
+    { "name": "mingw-x64", "configurePreset": "mingw-x64" },
+    { "name": "clang-cl-x64", "configurePreset": "clang-cl-x64" },
+    { "name": "wsl-gcc", "configurePreset": "wsl-gcc" },
+    { "name": "wsl-clang", "configurePreset": "wsl-clang" }
+  ],
+  "testPresets": [
+    { "name": "wsl-gcc", "configurePreset": "wsl-gcc", "output": { "outputOnFailure": true } },
+    { "name": "msvc-x64", "configurePreset": "msvc-x64", "configuration": "Release",
+      "output": { "outputOnFailure": true } }
+  ]
+}
