@@ -493,6 +493,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			_ = writeFrame(st, rawSignature(serverPriv, serverPub, env), env)
 		}
 		out := ""
+		firstSeq := int64(-1)
 		for i := 0; i < 4 && !strings.Contains(out, "hi") ; i++ {
 			rs, err := sess.AcceptStream()
 			if err != nil {
@@ -504,12 +505,15 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			}
 			v, b := envelopeFields(envOut)
 			if v[2] == 22 {
-				_, db := envelopeFields(b[3])
+				tv, db := envelopeFields(b[3])
+				if firstSeq < 0 {
+					firstSeq = int64(tv[3])
+				}
 				out += string(db[1])
 			}
 			rs.Close()
 		}
-		fmt.Printf("SHELL OUT: %q\n", out)
+		fmt.Printf("SHELL OUT (first-seq=%d): %q\n", firstSeq, out)
 		closeEnv := makeEnvelope(54, 23, appendUvarint(appendUvarint(nil, 8<<3), tunnel))
 		if cs, cerr := sess.OpenStream(); cerr == nil {
 			_ = writeFrame(cs, rawSignature(serverPriv, serverPub, closeEnv), closeEnv)
@@ -735,6 +739,7 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	}
 	return env
 }
+
 
 
 

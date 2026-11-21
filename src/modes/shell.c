@@ -80,13 +80,17 @@ static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int
     return -1;
   }
   sliver_buf_init(&msg);
-  t->sequence++;
+  /* Sliver's tunnel numbers data frames from 0; the peer buffers anything with
+   * a higher sequence until the gap is filled, so starting at 1 silences us. */
   if (sliver_tunnel_data_encode(&msg, data, len, closed, t->sequence, t->id) != 0) {
     sliver_buf_free(&msg);
     return -1;
   }
   rc = g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
   sliver_buf_free(&msg);
+  if (rc == 0) {
+    t->sequence++;
+  }
   return rc;
 }
 
