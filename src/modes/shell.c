@@ -146,6 +146,12 @@ int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out) {
     return sliver_shell_encode(out, sr.path, 0, 0, 0, err);
   }
   id = next_tunnel_id();
+  /* The client allocates the tunnel id and sends it in ShellReq (field 8); we
+   * must answer on that same tunnel or the client drops our frames. Only when
+   * the request carries no id (older clients) do we pick one ourselves. */
+  if (sr.tunnel_id != 0) {
+    id = sr.tunnel_id;
+  }
   t = tunnel_alloc(id, child);
   if (t == NULL) {
     sliver_child_terminate(child);

