@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int encode_response(sliver_buf_t *out, const char *err);
+
 static int buf_reserve(sliver_buf_t *b, size_t extra) {
   size_t need;
   uint8_t *grown;
@@ -514,16 +516,192 @@ int sliver_ls_encode(sliver_buf_t *out, const char *path, int exists,
   return 0;
 }
 
-int sliver_pwd_encode(sliver_buf_t *out, const char *path) {
+int sliver_pwd_encode(sliver_buf_t *out, const char *path, const char *err) {
   if (out == NULL) {
     return -1;
   }
   if (sliver_buf_put_string(out, 1, path != NULL ? path : "") != 0) {
     return -1;
   }
-  if (sliver_buf_put_tag(out, 9, 2) != 0 || sliver_buf_put_varint(out, 0) != 0) {
+  return encode_response(out, err);
+}
+
+
+/* --- path requests (Cd / Rm / Mkdir) ------------------------------------ */
+
+int sliver_path_req_decode(const void *data, size_t len, sliver_path_req_t *out) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL) {
     return -1;
   }
-  return 0;
+  memset(out, 0, sizeof(*out));
+  if (data == NULL) {
+    return 0;
+  }
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, out->path, sizeof(out->path)) != 0) {
+        return -1;
+      }
+    } else if (field == 2 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      out->recursive = v != 0;
+    } else if (field == 3 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      out->force = v != 0;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
 }
+
+static int encode_response(sliver_buf_t *out, const char *err) {
+  sliver_buf_t resp;
+  int rc;
+
+  if (err == NULL || err[0] == '\0') {
+    return sliver_buf_put_tag(out, 9, 2) == 0 && sliver_buf_put_varint(out, 0) == 0 ? 0 : -1;
+  }
+  sliver_buf_init(&resp);
+  if (sliver_buf_put_string(&resp, 1, err) != 0) {
+    sliver_buf_free(&resp);
+    return -1;
+  }
+  rc = sliver_buf_put_bytes(out, 9, resp.data, resp.len);
+  sliver_buf_free(&resp);
+  return rc;
+}
+
+int sliver_path_resp_encode(sliver_buf_t *out, const char *path, const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, path != NULL ? path : "") != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+/* --- Ps / Terminate ---------------------------------------------------- */
+
+int sliver_ps_encode(sliver_buf_t *out, const sliver_proc_info_t *procs, size_t count,
+                     const char *err) {
+  size_t i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    sliver_buf_t entry;
+    int rc;
+    sliver_buf_init(&entry);
+    if (sliver_buf_put_int32(&entry, 1, procs[i].pid) != 0 ||
+        sliver_buf_put_int32(&entry, 2, procs[i].ppid) != 0 ||
+        sliver_buf_put_string(&entry, 3, procs[i].exe != NULL ? procs[i].exe : "") != 0 ||
+        (procs[i].owner != NULL && procs[i].owner[0] != '\0' &&
+         sliver_buf_put_string(&entry, 4, procs[i].owner) != 0) ||
+        (procs[i].session_id != 0 && sliver_buf_put_int32(&entry, 5, procs[i].session_id) != 0) ||
+        (procs[i].cmdline != NULL && procs[i].cmdline[0] != '\0' &&
+         sliver_buf_put_string(&entry, 6, procs[i].cmdline) != 0) ||
+        (procs[i].arch != NULL && procs[i].arch[0] != '\0' &&
+         sliver_buf_put_string(&entry, 7, procs[i].arch) != 0)) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    rc = sliver_buf_put_bytes(out, 1, entry.data, entry.len);
+    sliver_buf_free(&entry);
+    if (rc != 0) {
+      return -1;
+    }
+  }
+  return encode_response(out, err);
+}
+
+int sliver_terminate_req_decode(const void *data, size_t len, int32_t *pid, int *force) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (pid == NULL) {
+    return -1;
+  }
+  *pid = 0;
+  if (force != NULL) {
+    *force = 0;
+  }
+  if (data == NULL) {
+    return 0;
+  }
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      *pid = (int32_t)v;
+    } else if (field == 2 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      if (force != NULL) {
+        *force = v != 0;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_terminate_encode(sliver_buf_t *out, int32_t pid, const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_int32(out, 1, pid) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+/* --- Env --------------------------------------------------------------- */
+
+int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t count,
+                      const char *err) {
+  size_t i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    sliver_buf_t entry;
+    int rc;
+    sliver_buf_init(&entry);
+    if (sliver_buf_put_string(&entry, 1, vars[i].key != NULL ? vars[i].key : "") != 0 ||
+        sliver_buf_put_string(&entry, 2, vars[i].value != NULL ? vars[i].value : "") != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    rc = sliver_buf_put_bytes(out, 1, entry.data, entry.len);
+    sliver_buf_free(&entry);
+    if (rc != 0) {
+      return -1;
+    }
+  }
+  return encode_response(out, err);
+}
+
+
 

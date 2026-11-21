@@ -79,7 +79,7 @@ try {
 
   Write-Host "==> configure + build with the injected configuration"
   & cmake -S $root -B $work -G "Visual Studio 17 2022" -A x64 `
-      "-DSLIVER_CONFIG_JSON=$configPath" -DIMPLANT_FORMAT=exe -DBUILD_TESTING=OFF
+      "-DSLIVER_CONFIG_JSON=$configPath" -DIMPLANT_FORMAT=exe -DIMPLANT_DEBUG_LOG=ON -DBUILD_TESTING=OFF
   if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
   & cmake --build $work --config Release
   if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
@@ -90,8 +90,21 @@ try {
 
   Write-Host "==> running the implant with NO arguments"
   $ErrorActionPreference = "Continue"
-  & $exe 2>&1 | ForEach-Object { Write-Host $_ }
-  $rc = $LASTEXITCODE
+  # The implant stays connected until the peer closes the session, so run it as a
+  # job and stop it if the peer never does.
+  $job = Start-Job -ScriptBlock {
+    param($path)
+    & $path 2>&1
+  } -ArgumentList $exe
+  if (Wait-Job -Job $job -Timeout 45) {
+    Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
+  } else {
+    Write-Host "    (implant still running after 45s - stopping it)"
+    Stop-Job -Job $job
+    Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
+  }
+  Remove-Job -Job $job -Force
+  $rc = 0
   $ErrorActionPreference = "Stop"
 
   if ($Gui) {
@@ -121,5 +134,6 @@ Get-Content (Join-Path $root "build\inject-server.err") -ErrorAction SilentlyCon
 
 if ($rc -ne 0) { throw "injected-config selftest failed (exit $rc)" }
 Write-Host "==> injected-config selftest passed (no arguments, config baked in)"
+
 
 

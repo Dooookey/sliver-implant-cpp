@@ -4,6 +4,7 @@
 #include "sliver/fs.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,3 +115,67 @@ int sliver_fs_abspath(const char *path, char *buf, size_t cap) {
   }
   return 0;
 }
+
+int sliver_fs_mkdir(const char *path) {
+  if (path == NULL || path[0] == '\0') {
+    return -1;
+  }
+  if (mkdir(path, 0755) == 0) {
+    return 0;
+  }
+  return errno == EEXIST ? 0 : -1;
+}
+
+static int remove_tree(const char *path) {
+  struct stat st;
+  if (lstat(path, &st) != 0) {
+    return -1;
+  }
+  if (!S_ISDIR(st.st_mode)) {
+    return unlink(path) == 0 ? 0 : -1;
+  }
+  {
+    DIR *dir = opendir(path);
+    struct dirent *de;
+    int rc = 0;
+    if (dir == NULL) {
+      return -1;
+    }
+    while ((de = readdir(dir)) != NULL) {
+      char child[PATH_MAX];
+      if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+        continue;
+      }
+      if (snprintf(child, sizeof(child), "%s/%s", path, de->d_name) >= (int)sizeof(child)) {
+        continue;
+      }
+      if (remove_tree(child) != 0) {
+        rc = -1;
+      }
+    }
+    (void)closedir(dir);
+    if (rmdir(path) != 0) {
+      rc = -1;
+    }
+    return rc;
+  }
+}
+
+int sliver_fs_remove(const char *path, int recursive, int force) {
+  struct stat st;
+  (void)force;
+  if (path == NULL || path[0] == '\0') {
+    return -1;
+  }
+  if (lstat(path, &st) != 0) {
+    return -1;
+  }
+  if (S_ISDIR(st.st_mode) && recursive) {
+    return remove_tree(path);
+  }
+  if (S_ISDIR(st.st_mode)) {
+    return rmdir(path) == 0 ? 0 : -1;
+  }
+  return unlink(path) == 0 ? 0 : -1;
+}
+

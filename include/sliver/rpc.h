@@ -31,9 +31,16 @@ void sliver_rpc_result_free(sliver_rpc_result_t *result);
 /* Individual handlers (exposed for tests). Return 0 on success. */
 int sliver_rpc_handle_ls(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_rpc_handle_pwd(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_cd(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_rm(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_mkdir(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_ps(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_terminate(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_env(const sliver_envelope_t *req, sliver_buf_t *out);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* SLIVER_RPC_H */
+

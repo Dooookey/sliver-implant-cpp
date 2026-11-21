@@ -1,11 +1,13 @@
 /* src/rpc/dispatch.c - handler table and the first slice of Sliver RPCs. */
 #include "sliver/rpc.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "sliver/fs.h"
 #include "sliver/log.h"
+#include "sliver/proc.h"
 
 #define SLIVER_LS_MAX_ENTRIES 4096
 
@@ -95,13 +97,144 @@ int sliver_rpc_handle_pwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   if (sliver_fs_getcwd(cwd, sizeof(cwd)) != 0) {
     return -1;
   }
-  return sliver_pwd_encode(out, cwd);
+  return sliver_pwd_encode(out, cwd, NULL);
+}
+
+/* --- Cd ---------------------------------------------------------------- */
+int sliver_rpc_handle_cd(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_path_req_t p;
+  char cwd[1024];
+  char err[256];
+
+  if (sliver_path_req_decode(req->data, req->data_len, &p) != 0) {
+    return -1;
+  }
+  err[0] = '\0';
+  if (sliver_fs_chdir(p.path) != 0) {
+    (void)snprintf(err, sizeof(err), "chdir %s: failed", p.path);
+  }
+  if (sliver_fs_getcwd(cwd, sizeof(cwd)) != 0) {
+    (void)snprintf(cwd, sizeof(cwd), "%s", p.path);
+  }
+  LOG_DEBUG("rpc: cd '%s' -> %s", p.path, cwd);
+  return sliver_pwd_encode(out, cwd, err);
+}
+
+/* --- Rm ---------------------------------------------------------------- */
+int sliver_rpc_handle_rm(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_path_req_t p;
+  char err[256];
+
+  if (sliver_path_req_decode(req->data, req->data_len, &p) != 0) {
+    return -1;
+  }
+  err[0] = '\0';
+  if (sliver_fs_remove(p.path, p.recursive, p.force) != 0) {
+    (void)snprintf(err, sizeof(err), "rm %s: failed", p.path);
+  }
+  return sliver_path_resp_encode(out, p.path, err);
+}
+
+/* --- Mkdir ------------------------------------------------------------- */
+int sliver_rpc_handle_mkdir(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_path_req_t p;
+  char err[256];
+
+  if (sliver_path_req_decode(req->data, req->data_len, &p) != 0) {
+    return -1;
+  }
+  err[0] = '\0';
+  if (sliver_fs_mkdir(p.path) != 0) {
+    (void)snprintf(err, sizeof(err), "mkdir %s: failed", p.path);
+  }
+  return sliver_path_resp_encode(out, p.path, err);
+}
+
+/* --- Ps ---------------------------------------------------------------- */
+int sliver_rpc_handle_ps(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_proc_t *procs = NULL;
+  sliver_proc_info_t *infos = NULL;
+  size_t count = 0;
+  size_t i;
+  int rc;
+
+  (void)req;
+  if (sliver_proc_list(&procs, &count) != 0) {
+    return sliver_ps_encode(out, NULL, 0, "ps: cannot enumerate processes");
+  }
+  infos = (sliver_proc_info_t *)calloc(count == 0 ? 1 : count, sizeof(sliver_proc_info_t));
+  if (infos == NULL) {
+    sliver_proc_free(procs);
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    infos[i].pid = procs[i].pid;
+    infos[i].ppid = procs[i].ppid;
+    infos[i].exe = procs[i].exe;
+    infos[i].owner = procs[i].owner;
+    infos[i].session_id = procs[i].session_id;
+    infos[i].cmdline = procs[i].cmdline;
+    infos[i].arch = procs[i].arch;
+  }
+  rc = sliver_ps_encode(out, infos, count, NULL);
+  free(infos);
+  sliver_proc_free(procs);
+  return rc;
+}
+
+/* --- Terminate --------------------------------------------------------- */
+int sliver_rpc_handle_terminate(const sliver_envelope_t *req, sliver_buf_t *out) {
+  int32_t pid = 0;
+  int force = 0;
+  char err[128];
+
+  if (sliver_terminate_req_decode(req->data, req->data_len, &pid, &force) != 0) {
+    return -1;
+  }
+  err[0] = '\0';
+  if (sliver_proc_terminate(pid, force) != 0) {
+    (void)snprintf(err, sizeof(err), "terminate %d: failed", (int)pid);
+  }
+  return sliver_terminate_encode(out, pid, err);
+}
+
+/* --- Env --------------------------------------------------------------- */
+int sliver_rpc_handle_env(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_env_t *vars = NULL;
+  sliver_env_pair_t *pairs = NULL;
+  size_t count = 0;
+  size_t i;
+  int rc;
+
+  (void)req;
+  if (sliver_env_list(&vars, &count) != 0) {
+    return sliver_env_encode(out, NULL, 0, "env: cannot read environment");
+  }
+  pairs = (sliver_env_pair_t *)calloc(count == 0 ? 1 : count, sizeof(sliver_env_pair_t));
+  if (pairs == NULL) {
+    sliver_env_free(vars);
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    pairs[i].key = vars[i].key;
+    pairs[i].value = vars[i].value;
+  }
+  rc = sliver_env_encode(out, pairs, count, NULL);
+  free(pairs);
+  sliver_env_free(vars);
+  return rc;
 }
 
 /* --- table ------------------------------------------------------------- */
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
+    {SLIVER_MSG_CD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_cd},
+    {SLIVER_MSG_RM_REQ, SLIVER_MSG_RM, sliver_rpc_handle_rm},
+    {SLIVER_MSG_MKDIR_REQ, SLIVER_MSG_MKDIR, sliver_rpc_handle_mkdir},
+    {SLIVER_MSG_PS_REQ, SLIVER_MSG_PS, sliver_rpc_handle_ps},
+    {SLIVER_MSG_TERMINATE_REQ, SLIVER_MSG_TERMINATE, sliver_rpc_handle_terminate},
+    {SLIVER_MSG_ENV_REQ, SLIVER_MSG_ENV, sliver_rpc_handle_env},
 };
 
 void sliver_rpc_result_free(sliver_rpc_result_t *result) {
@@ -144,3 +277,4 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+

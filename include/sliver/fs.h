@@ -28,6 +28,11 @@ int sliver_fs_list(const char *path, sliver_dir_cb cb, void *ctx);
 int sliver_fs_exists(const char *path);
 int sliver_fs_getcwd(char *buf, size_t cap);
 int sliver_fs_chdir(const char *path);
+/* Creates one directory level. Returns 0 on success (existing dir counts). */
+int sliver_fs_mkdir(const char *path);
+/* Removes a file or directory. recursive walks subdirectories; force ignores
+ * read-only/permission quirks where the platform allows it. */
+int sliver_fs_remove(const char *path, int recursive, int force);
 /* Expands a possibly relative path to absolute form (best effort). */
 int sliver_fs_abspath(const char *path, char *buf, size_t cap);
 

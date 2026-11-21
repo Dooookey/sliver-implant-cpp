@@ -25,13 +25,14 @@ extern "C" {
 #endif
 
 #define SLIVER_YAMUX_INITIAL_WINDOW (256u * 1024u)
-#define SLIVER_YAMUX_MAX_STREAMS 8
+#define SLIVER_YAMUX_MAX_STREAMS 64
 #define SLIVER_YAMUX_MAX_FRAME (64u * 1024u)
 
 typedef struct {
   uint32_t id;
   int used;
   int fin_received;
+  int closed_write;
   uint32_t send_window;
   sliver_buf_t in;
   size_t in_off;

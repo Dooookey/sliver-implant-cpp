@@ -102,3 +102,69 @@ int sliver_fs_abspath(const char *path, char *buf, size_t cap) {
   }
   return 0;
 }
+
+int sliver_fs_mkdir(const char *path) {
+  if (path == NULL || path[0] == '\0') {
+    return -1;
+  }
+  if (CreateDirectoryA(path, NULL)) {
+    return 0;
+  }
+  return GetLastError() == ERROR_ALREADY_EXISTS ? 0 : -1;
+}
+
+static int remove_tree(const char *path, int force) {
+  DWORD attrs = GetFileAttributesA(path);
+  if (attrs == INVALID_FILE_ATTRIBUTES) {
+    return -1;
+  }
+  if ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+    char pattern[MAX_PATH * 2];
+    WIN32_FIND_DATAA data;
+    HANDLE h;
+    if (snprintf(pattern, sizeof(pattern), "%s\\*", path) >= (int)sizeof(pattern)) {
+      return -1;
+    }
+    h = FindFirstFileA(pattern, &data);
+    if (h != INVALID_HANDLE_VALUE) {
+      do {
+        char child[MAX_PATH * 2];
+        if (strcmp(data.cFileName, ".") == 0 || strcmp(data.cFileName, "..") == 0) {
+          continue;
+        }
+        if (snprintf(child, sizeof(child), "%s\\%s", path, data.cFileName) >= (int)sizeof(child)) {
+          continue;
+        }
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+          (void)remove_tree(child, force);
+        } else {
+          if (force && (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0) {
+            (void)SetFileAttributesA(child, FILE_ATTRIBUTE_NORMAL);
+          }
+          (void)DeleteFileA(child);
+        }
+      } while (FindNextFileA(h, &data));
+      (void)FindClose(h);
+    }
+    return RemoveDirectoryA(path) ? 0 : -1;
+  }
+  if (force && (attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+    (void)SetFileAttributesA(path, FILE_ATTRIBUTE_NORMAL);
+  }
+  return DeleteFileA(path) ? 0 : -1;
+}
+
+int sliver_fs_remove(const char *path, int recursive, int force) {
+  DWORD attrs;
+  if (path == NULL || path[0] == '\0') {
+    return -1;
+  }
+  attrs = GetFileAttributesA(path);
+  if (attrs == INVALID_FILE_ATTRIBUTES) {
+    return -1;
+  }
+  if ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && !recursive) {
+    return RemoveDirectoryA(path) ? 0 : -1;
+  }
+  return remove_tree(path, force);
+}

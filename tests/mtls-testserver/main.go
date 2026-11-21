@@ -391,39 +391,52 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	fmt.Printf("PWD ok: type=%d id=%d cwd=%q\n", pv[2], pv[1], string(pwdBody[1]))
 	pwdStream.Close()
 
-	// Server initiated stream -> signed Ping; the implant should answer with
-	// Envelope{ID, UnknownMessageType:true}.
-	srvStream, err := sess.OpenStream()
-	if err != nil {
-		log.Printf("open server stream: %v", err)
-		return
+	// Cd / Mkdir / Ps / Env / Rm through the generic helper.
+	if _, cdBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 44, 11, protoStr(1, "."), 13); err != nil {
+		log.Printf("cd failed: %v", err)
+	} else {
+		_, cb := envelopeFields(cdBody[3])
+		fmt.Printf("CD ok: cwd=%q\n", string(cb[1]))
 	}
-	// Envelope{ID: 12345, Type: 44 (MsgExecuteReq), Data: "x"} - a message the
-	// implant does not implement, so it must answer UnknownMessageType.
-	reply := []byte{0x08, 0xb9, 0x60, 0x10, 0x2c, 0x1a, 0x01, 0x78}
-	if err := writeFrame(srvStream, rawSignature(serverPriv, serverPub, reply), reply); err != nil {
-		log.Printf("write ping: %v", err)
-		return
+	if _, mkBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 45, 16, protoStr(1, "build/rpc-tmp"), 17); err != nil {
+		log.Printf("mkdir failed: %v", err)
+	} else {
+		_, mb := envelopeFields(mkBody[3])
+		fmt.Printf("MKDIR ok: path=%q\n", string(mb[1]))
 	}
-	log.Printf("sent signed Ping on server stream %d", srvStream.StreamID())
+	if _, psBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 46, 18, nil, 19); err != nil {
+		log.Printf("ps failed: %v", err)
+	} else {
+		_, pb2 := envelopeFields(psBody[3])
+		count := 0
+		for i := 0; i+1 < len(pb2[1]); {
+			break
+		}
+		// count repeated field 3 (Processes) by scanning the message
+		count = countRepeated(psBody[3])
+		fmt.Printf("PS ok: processes=%d\n", count)
+	}
+	if _, envBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 47, 66, nil, 67); err != nil {
+		log.Printf("env failed: %v", err)
+	} else {
+		fmt.Printf("ENV ok: variables=%d\n", countRepeated(envBody[3]))
+	}
+	if _, rmBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 48, 14, append(protoStr(1, "build/rpc-tmp"), 0x10, 0x01), 15); err != nil {
+		log.Printf("rm failed: %v", err)
+	} else {
+		_, rb := envelopeFields(rmBody[3])
+		fmt.Printf("RM ok: path=%q\n", string(rb[1]))
+	}
 
-	replyStream, err := sess.AcceptStream()
-	if err != nil {
-		log.Printf("accept unknown-type reply stream: %v", err)
-		return
+	// Server initiated stream with a message type the implant does not implement
+	// (MsgExecuteReq=44): it must answer Envelope{ID, UnknownMessageType:true}.
+	unknown := []byte{0x08, 0xb9, 0x60, 0x10, 0x2c, 0x1a, 0x01, 0x78}
+	if _, resp, err := rawExchange(sess, serverPriv, serverPub, clientPub, unknown); err != nil {
+		log.Printf("unknown-type roundtrip failed: %v", err)
+	} else {
+		v, _ := envelopeFields(resp)
+		fmt.Printf("IMPLANT REPLY ok: type=%d id=%d unknown-type=%d\n", v[2], v[1], v[4])
 	}
-	sig2, env2, err := readFrame(replyStream)
-	if err != nil {
-		log.Printf("no reply from implant: %v", err)
-		return
-	}
-	if !ed25519.Verify(clientPub, env2, sig2[10:]) {
-		log.Printf("implant reply signature INVALID")
-		return
-	}
-	v2, _ := envelopeFields(env2)
-	fmt.Printf("IMPLANT REPLY ok: type=%d id=%d unknown-type=%d\n", v2[2], v2[1], v2[4])
-	srvStream.Close()
 }
 
 
@@ -480,5 +493,128 @@ func firstN(values []string, n int) []string {
 }
 
 
+
+
+
+// rpcCall performs one request/response exchange the way the Sliver server does:
+// request on a new stream, response on a new stream, same envelope id.
+func rpcCall(sess *yamux.Session, priv ed25519.PrivateKey, pub, clientPub ed25519.PublicKey,
+	id uint64, reqType uint32, payload []byte, wantType uint32) (map[uint64]uint64, map[uint64][]byte, error) {
+	env := []byte{0x08}
+	env = appendUvarint(env, id)
+	env = append(env, 0x10)
+	env = appendUvarint(env, uint64(reqType))
+	if payload != nil {
+		env = append(env, 0x1a)
+		env = appendUvarint(env, uint64(len(payload)))
+		env = append(env, payload...)
+	}
+	stream, err := sess.OpenStream()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := writeFrame(stream, rawSignature(priv, pub, env), env); err != nil {
+		return nil, nil, err
+	}
+	respStream, err := sess.AcceptStream()
+	if err != nil {
+		return nil, nil, err
+	}
+	sig, resp, err := readFrame(respStream)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ed25519.Verify(clientPub, resp, sig[10:]) {
+		return nil, nil, fmt.Errorf("bad response signature")
+	}
+	v, b := envelopeFields(resp)
+	if v[2] != uint64(wantType) {
+		return v, b, fmt.Errorf("want type %d got %d", wantType, v[2])
+	}
+	if v[1] != id {
+		return v, b, fmt.Errorf("response id %d != %d", v[1], id)
+	}
+	stream.Close()
+	respStream.Close()
+	return v, b, nil
+}
+
+func appendUvarint(dst []byte, v uint64) []byte {
+	var buf [10]byte
+	n := binary.PutUvarint(buf[:], v)
+	return append(dst, buf[:n]...)
+}
+
+// protoStr encodes a length-delimited field with a string payload.
+func protoStr(field uint64, s string) []byte {
+	out := appendUvarint(nil, field<<3|2)
+	out = appendUvarint(out, uint64(len(s)))
+	return append(out, s...)
+}
+
+
+// countRepeated counts repeated length-delimited fields in a message body.
+func countRepeated(body []byte) int {
+	count := 0
+	i := 0
+	for i < len(body) {
+		key, n := binary.Uvarint(body[i:])
+		if n <= 0 {
+			break
+		}
+		i += n
+		wire := key & 7
+		field := key >> 3
+		switch wire {
+		case 2:
+			l, n2 := binary.Uvarint(body[i:])
+			if n2 <= 0 {
+				return count
+			}
+			i += n2 + int(l)
+			if field == 1 || field == 3 {
+				count++
+			}
+		case 0:
+			_, n2 := binary.Uvarint(body[i:])
+			if n2 <= 0 {
+				return count
+			}
+			i += n2
+		default:
+			return count
+		}
+	}
+	return count
+}
+
+
+
+// rawExchange sends a pre-built envelope and returns the (signed) response.
+func rawExchange(sess *yamux.Session, priv ed25519.PrivateKey, pub, clientPub ed25519.PublicKey,
+	env []byte) (map[uint64]uint64, []byte, error) {
+	stream, err := sess.OpenStream()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := writeFrame(stream, rawSignature(priv, pub, env), env); err != nil {
+		return nil, nil, err
+	}
+	respStream, err := sess.AcceptStream()
+	if err != nil {
+		return nil, nil, err
+	}
+	sig, resp, err := readFrame(respStream)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ed25519.Verify(clientPub, resp, sig[10:]) {
+		return nil, nil, fmt.Errorf("bad response signature")
+	}
+	v, _ := envelopeFields(resp)
+	stream.Close()
+	respStream.Close()
+	return v, resp, nil
+}
 
 

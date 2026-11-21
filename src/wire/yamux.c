@@ -77,6 +77,21 @@ static int send_frame(sliver_yamux_t *y, uint8_t type, uint16_t flags, uint32_t 
   return 0;
 }
 
+static void release_stream(sliver_yamux_stream_t *s) {
+  if (s == NULL || !s->used) {
+    return;
+  }
+  sliver_buf_free(&s->in);
+  memset(s, 0, sizeof(*s));
+}
+
+/* Frees the slot once both sides are done with the stream. */
+static void maybe_release(sliver_yamux_stream_t *s) {
+  if (s != NULL && s->used && s->fin_received && s->closed_write) {
+    release_stream(s);
+  }
+}
+
 static sliver_yamux_stream_t *find_stream(sliver_yamux_t *y, uint32_t id) {
   for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
     if (y->streams[i].used && y->streams[i].id == id) {
@@ -213,6 +228,7 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
       if (length != 0 && !s->fin_received) {
         (void)replenish(y, id, length);
       }
+      maybe_release(s);
       return 0;
     }
     case YAMUX_TYPE_WINDOW_UPDATE: {
@@ -292,13 +308,24 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
 }
 
 int sliver_yamux_close_write(sliver_yamux_t *y, uint32_t stream_id) {
-  if (y == NULL || y->failed || find_stream(y, stream_id) == NULL) {
+  sliver_yamux_stream_t *s;
+
+  if (y == NULL || y->failed) {
     return -1;
+  }
+  s = find_stream(y, stream_id);
+  if (s == NULL) {
+    return 0; /* already released - nothing to half-close */
+  }
+  if (s->closed_write) {
+    return 0;
   }
   if (send_frame(y, YAMUX_TYPE_DATA, YAMUX_FLAG_FIN, stream_id, NULL, 0) != 0) {
     y->failed = 1;
     return -1;
   }
+  s->closed_write = 1;
+  maybe_release(s);
   return 0;
 }
 
@@ -346,3 +373,4 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     }
   }
 }
+

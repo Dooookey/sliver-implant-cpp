@@ -64,6 +64,7 @@ static int send_envelope(session_tx_t *tx, const void *envelope, size_t len) {
     sliver_mutex_lock(tx->tx_lock);
   }
   if (sliver_yamux_open(tx->y, &sid) != 0) {
+    LOG_ERROR("session: yamux open failed");
     if (tx->tx_lock != NULL) {
       sliver_mutex_unlock(tx->tx_lock);
     }
@@ -248,7 +249,11 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
         LOG_INFO("session: unsupported message type %u, sending UnknownMessageType",
                  envelope.type);
         if (encode_unknown_reply(&reply, envelope.id) == 0) {
-          (void)send_envelope(&tx, reply.data, reply.len);
+          if (send_envelope(&tx, reply.data, reply.len) != 0) {
+            LOG_ERROR("session: unknown-type reply send failed");
+          } else {
+            LOG_DEBUG("session: unknown-type reply sent (%u bytes)", (unsigned)reply.len);
+          }
           sliver_buf_free(&reply);
         }
       }
@@ -277,3 +282,5 @@ out:
   }
   return rc;
 }
+
+
