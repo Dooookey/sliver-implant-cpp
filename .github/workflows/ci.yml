@@ -1,0 +1,95 @@
+name: implant-cpp-ci
+
+on:
+  push:
+    branches: [main, master, dev, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: linux-${{ matrix.compiler }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake-${{ matrix.compiler == 'gcc' && 'gcc' || 'clang' }} || true
+      - name: configure
+        run: cmake --preset wsl-${{ matrix.compiler }} -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+      - name: build
+        run: cmake --build --preset wsl-${{ matrix.compiler }}
+      - name: test
+        run: ctest --test-dir build/wsl-${{ matrix.compiler }} --output-on-failure
+      - name: static + size gate
+        run: |
+          set -e
+          bin=build/wsl-${{ matrix.compiler }}/bin/implant
+          file "$bin"
+          if readelf -l "$bin" | grep -q INTERP; then
+            echo "::error file=$bin::artifact is dynamically linked (PT_INTERP)"; exit 1
+          fi
+          sz=$(stat -c%s "$bin"); echo "$bin = $sz bytes"
+          test "$sz" -le 5242880
+          test "$sz" -le 524288 || echo "::warning file=$bin::above 512 KiB target ($sz bytes)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: implant-linux-${{ matrix.compiler }}
+          path: build/wsl-${{ matrix.compiler }}/bin/implant
+
+  mingw:
+    name: windows-mingw-cross
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build mingw-w64
+      - name: configure
+        run: cmake --preset mingw-x64
+      - name: build
+        run: cmake --build --preset mingw-x64
+      - name: static + size gate
+        run: |
+          set -e
+          bin=build/mingw-x64/bin/implant.exe
+          x86_64-w64-mingw32-objdump -p "$bin" | grep -Ei 'DLL Name' || true
+          if x86_64-w64-mingw32-objdump -p "$bin" | grep -Eiq 'libgcc_s_|libwinpthread|msvcrt'; then
+            echo "::error file=$bin::dynamic MinGW runtime import"; exit 1
+          fi
+          sz=$(stat -c%s "$bin"); echo "$bin = $sz bytes"
+          test "$sz" -le 5242880
+      - uses: actions/upload-artifact@v4
+        with:
+          name: implant-windows-mingw
+          path: build/mingw-x64/bin/implant.exe
+
+  msvc:
+    name: windows-msvc
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake --preset msvc-x64
+      - name: build
+        run: cmake --build --preset msvc-x64
+      - name: test
+        run: ctest --test-dir build/msvc-x64 -C Release --output-on-failure
+      - name: static + size gate
+        shell: pwsh
+        run: |
+          $bin = "build/msvc-x64/bin/implant.exe"
+          $deps = & dumpbin /dependents $bin | Out-String
+          Write-Host $deps
+          if ($deps -match 'VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt') {
+            Write-Error "::error file=$bin::dynamic VC runtime dependency"; exit 1
+          }
+          $sz = (Get-Item $bin).Length
+          Write-Host "$bin = $sz bytes"
+          if ($sz -gt 5242880) { Write-Error "size over 5 MiB"; exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: implant-windows-msvc
+          path: build/msvc-x64/bin/implant.exe

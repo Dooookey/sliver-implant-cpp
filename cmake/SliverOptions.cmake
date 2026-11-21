@@ -41,9 +41,10 @@ if(MSVC)
   endif()
   if(IMPLANT_STRIP)
     add_link_options("/DEBUG:NONE")
+    # /pathmap rewrites the compiler's PDB path, which breaks debug builds
+    # (C1090: PDB API call failed). Only scrub paths when symbols are dropped.
+    add_compile_options("/experimental:deterministic" "/pathmap:${CMAKE_SOURCE_DIR}=/src")
   endif()
-  # /pathmap requires the deterministic experiment on MSVC 19.4x
-  add_compile_options("/experimental:deterministic" "/pathmap:${CMAKE_SOURCE_DIR}=/src")
 else()
   add_compile_options("-ffunction-sections" "-fdata-sections")
   add_link_options("-Wl,--gc-sections")

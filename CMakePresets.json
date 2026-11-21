@@ -13,11 +13,31 @@
       }
     },
     {
+      "name": "debug-base",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "IMPLANT_DEBUG_LOG": "ON",
+        "IMPLANT_LTO": "OFF",
+        "IMPLANT_STRIP": "OFF"
+      }
+    },
+    {
       "name": "msvc-x64",
       "displayName": "MSVC 2022 x64 (Visual Studio generator, no vcvars needed)",
       "inherits": "base",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
+      "cacheVariables": { "IMPLANT_FORMAT": "exe" }
+    },
+    {
+      "name": "msvc-x64-debug",
+      "displayName": "MSVC 2022 x64 debug (breakpoints in VS / CLion / Rider)",
+      "inherits": "debug-base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/msvc-x64-debug",
       "cacheVariables": { "IMPLANT_FORMAT": "exe" }
     },
     {
@@ -43,10 +63,22 @@
     },
     {
       "name": "wsl-gcc",
-      "displayName": "Linux gcc (WSL)",
+      "displayName": "Linux gcc (WSL, static)",
       "inherits": "base",
       "generator": "Ninja",
       "cacheVariables": { "CMAKE_C_COMPILER": "gcc" }
+    },
+    {
+      "name": "wsl-gcc-debug",
+      "displayName": "Linux gcc debug (gdb/lldb, dynamic link)",
+      "inherits": "debug-base",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wsl-gcc-debug",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "IMPLANT_STATIC_LINK": "OFF",
+        "CMAKE_C_FLAGS_DEBUG": "-g3 -O0"
+      }
     },
     {
       "name": "wsl-clang",
@@ -54,19 +86,32 @@
       "inherits": "wsl-gcc",
       "binaryDir": "${sourceDir}/build/wsl-clang",
       "cacheVariables": { "CMAKE_C_COMPILER": "clang" }
+    },
+    {
+      "name": "wsl-musl",
+      "displayName": "Linux gcc via musl-gcc (KB-sized static ELF)",
+      "inherits": "wsl-gcc",
+      "binaryDir": "${sourceDir}/build/wsl-musl",
+      "cacheVariables": { "CMAKE_C_COMPILER": "musl-gcc" }
     }
   ],
   "buildPresets": [
     { "name": "msvc-x64", "configurePreset": "msvc-x64", "configuration": "Release" },
+    { "name": "msvc-x64-debug", "configurePreset": "msvc-x64-debug", "configuration": "Debug" },
     { "name": "msvc-x64-dll", "configurePreset": "msvc-x64-dll", "configuration": "Release" },
     { "name": "mingw-x64", "configurePreset": "mingw-x64" },
     { "name": "clang-cl-x64", "configurePreset": "clang-cl-x64" },
     { "name": "wsl-gcc", "configurePreset": "wsl-gcc" },
-    { "name": "wsl-clang", "configurePreset": "wsl-clang" }
+    { "name": "wsl-gcc-debug", "configurePreset": "wsl-gcc-debug" },
+    { "name": "wsl-clang", "configurePreset": "wsl-clang" },
+    { "name": "wsl-musl", "configurePreset": "wsl-musl" }
   ],
   "testPresets": [
     { "name": "wsl-gcc", "configurePreset": "wsl-gcc", "output": { "outputOnFailure": true } },
+    { "name": "wsl-gcc-debug", "configurePreset": "wsl-gcc-debug", "output": { "outputOnFailure": true } },
     { "name": "msvc-x64", "configurePreset": "msvc-x64", "configuration": "Release",
+      "output": { "outputOnFailure": true } },
+    { "name": "msvc-x64-debug", "configurePreset": "msvc-x64-debug", "configuration": "Debug",
       "output": { "outputOnFailure": true } }
   ]
 }
