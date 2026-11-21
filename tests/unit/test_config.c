@@ -39,6 +39,15 @@ int main(void) {
   CHECK(sliver_config_self_check(err, sizeof(err)) == 0, "config must be self-consistent");
   CHECK(err[0] == '\0', "no error text on success");
 
+  /* Secret slot table must match the generated TU (guards header/generator drift). */
+  CHECK(sliver_config_secret_length(SLIVER_SECRET_COUNT) == 0,
+        "out of range secret slot must be empty");
+  CHECK(sliver_config_secret(SLIVER_SECRET_PEER_PUBLIC_KEY) == NULL ||
+            sliver_config_secret_length(SLIVER_SECRET_PEER_PUBLIC_KEY) > 0,
+        "secret accessor must return NULL or a non-empty value");
+  CHECK(sliver_config_is_beacon() == 0 || sliver_config_is_beacon() == 1,
+        "beacon flag must be boolean");
+
   tiny[0] = '\0';
   (void)sliver_config_self_check(tiny, sizeof(tiny));
   CHECK(strlen(tiny) < sizeof(tiny), "error message must stay truncated");

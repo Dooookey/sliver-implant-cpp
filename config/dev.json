@@ -2,10 +2,33 @@
   "name": "sliver-implant-dev",
   "build_id": "dev-local",
   "strategy": "s",
+  "beacon": false,
+  "poll_timeout": 0,
   "reconnect_interval_ns": 60000000000,
   "beacon_interval_ns": 60000000000,
   "beacon_jitter_ns": 0,
   "max_connection_errors": 1000,
   "features": { "mtls": true, "http": false, "dns": false, "wg": false, "pivot": false },
-  "c2": [ "mtls://127.0.0.1:8888" ]
+  "c2": [ { "url": "mtls://127.0.0.1:8888" } ],
+  "limits": {
+    "domain_joined": false,
+    "datetime": "",
+    "hostname": "",
+    "username": "",
+    "file_exists": "",
+    "locale": ""
+  },
+  "secrets": {
+    "peer_public_key": "",
+    "peer_private_key": "",
+    "peer_public_key_signature": "",
+    "age_server_public_key": "",
+    "minisign_server_public_key": "",
+    "mtls_ca_cert": "",
+    "mtls_cert": "",
+    "mtls_key": "",
+    "wg_implant_priv_key": "",
+    "wg_server_pub_key": "",
+    "wg_peer_tun_ip": ""
+  }
 }
