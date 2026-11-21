@@ -106,6 +106,29 @@ static sliver_yamux_stream_t *alloc_stream(sliver_yamux_t *y, uint32_t id) {
   if (s != NULL) {
     return s;
   }
+  /* Table full: reclaim the oldest stream we already finished writing. The peer
+   * often never sends FIN for one-shot envelopes, so those slots would leak. */
+  {
+    int have_slot = 0;
+    for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
+      if (!y->streams[i].used) {
+        have_slot = 1;
+        break;
+      }
+    }
+    if (!have_slot) {
+      sliver_yamux_stream_t *victim = NULL;
+      for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
+        if (y->streams[i].used && y->streams[i].closed_write &&
+            (victim == NULL || y->streams[i].id < victim->id)) {
+          victim = &y->streams[i];
+        }
+      }
+      if (victim != NULL) {
+        release_stream(victim);
+      }
+    }
+  }
   for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
     if (!y->streams[i].used) {
       memset(&y->streams[i], 0, sizeof(y->streams[i]));
@@ -128,7 +151,11 @@ int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
   y->read_fn = read_fn;
   y->write_fn = write_fn;
   y->ctx = ctx;
-  y->next_stream_id = 2; /* clients use even ids */
+  /* hashicorp/yamux: the *client* starts at 1 and steps by 2 (odd ids), the
+   * server starts at 2 (even ids). Using even ids here collided with the
+   * server's own streams, which corrupted tunnelled traffic and made accepts
+   * swallow server requests. */
+  y->next_stream_id = 1;
   return 0;
 }
 
@@ -151,6 +178,13 @@ int sliver_yamux_open(sliver_yamux_t *y, uint32_t *stream_id) {
   }
   id = y->next_stream_id;
   y->next_stream_id += 2;
+  if (y->local_count < SLIVER_YAMUX_MAX_STREAMS) {
+    y->local_ids[y->local_count++] = id;
+  } else {
+    memmove(y->local_ids, y->local_ids + 1,
+            sizeof(y->local_ids[0]) * (SLIVER_YAMUX_MAX_STREAMS - 1));
+    y->local_ids[SLIVER_YAMUX_MAX_STREAMS - 1] = id;
+  }
   s = alloc_stream(y, id);
   if (s == NULL) {
     return -1;
@@ -234,7 +268,11 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
     case YAMUX_TYPE_WINDOW_UPDATE: {
       sliver_yamux_stream_t *s = find_stream(y, id);
       if ((flags & YAMUX_FLAG_SYN) != 0) {
-        /* Server initiated stream: acknowledge and remember it for accept. */
+        if (find_stream(y, id) != NULL) {
+          /* ACK of a stream we opened ourselves. */
+          return 0;
+        }
+        /* Peer initiated stream: acknowledge and remember it for accept. */
         if (alloc_stream(y, id) != NULL) {
           (void)send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_ACK, id, NULL, 0);
           y->pending_accept = id;
@@ -329,6 +367,13 @@ int sliver_yamux_close_write(sliver_yamux_t *y, uint32_t stream_id) {
   return 0;
 }
 
+void sliver_yamux_forget(sliver_yamux_t *y, uint32_t stream_id) {
+  if (y == NULL) {
+    return;
+  }
+  release_stream(find_stream(y, stream_id));
+}
+
 int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
   if (y == NULL || stream_id == NULL) {
     return -1;
@@ -373,4 +418,9 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     }
   }
 }
+
+
+
+
+
 

@@ -490,7 +490,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		tunnel := sv[8]
 		_, shr := envelopeFields(sb[9])
 		fmt.Printf("SHELL ok: pid=%d tunnel=%d (client asked %d) err=%q\n", sv[3], tunnel, clientTunnel, string(shr[1]))
-		stdin := append(protoStrBytes(1, []byte("echo \u4e2d\u6587\u6d4b\u8bd5\r\n")), appendUvarint(nil, 8<<3)...)
+		stdin := append(protoStrBytes(1, []byte("dir C:\\Windows\\System32\r\necho after-big\r\n")), appendUvarint(nil, 8<<3)...)
 		stdin = appendUvarint(stdin, tunnel)
 		env := makeEnvelope(53, 22, stdin)
 		st, err := sess.OpenStream()
@@ -500,7 +500,8 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		out := ""
 		firstSeq := int64(-1)
 		var ackSeen uint64
-		for i := 0; i < 6 && !strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5\r\n\u4e2d\u6587\u6d4b\u8bd5") ; i++ {
+		frames := 0
+		for i := 0; i < 600 && !strings.Contains(out, "after-big") ; i++ {
 			rs, err := sess.AcceptStream()
 			if err != nil {
 				break
@@ -511,6 +512,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			}
 			v, b := envelopeFields(envOut)
 			if v[2] == 22 {
+				frames++
 				tv, db := envelopeFields(b[3])
 				if tv[4] != 0 {
 					ackSeen = tv[4]
@@ -522,7 +524,8 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			}
 			rs.Close()
 		}
-		fmt.Printf("SHELL OUT (first-seq=%d, ack=%d, utf8-chinese=%v)\n", firstSeq, ackSeen, strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5"))
+		fmt.Printf("SHELL OUT (first-seq=%d, ack=%d, frames=%d, big-output-ok=%v, after-big=%v, bytes=%d)\n",
+			firstSeq, ackSeen, frames, len(out) > 4096, strings.Contains(out, "after-big"), len(out))
 		closeEnv := makeEnvelope(54, 23, appendUvarint(appendUvarint(nil, 8<<3), tunnel))
 		if cs, cerr := sess.OpenStream(); cerr == nil {
 			_ = writeFrame(cs, rawSignature(serverPriv, serverPub, closeEnv), closeEnv)
@@ -748,6 +751,8 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	}
 	return env
 }
+
+
 
 
 
