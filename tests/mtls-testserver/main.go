@@ -485,7 +485,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		sv, _ := envelopeFields(shBody[3])
 		tunnel := sv[8]
 		fmt.Printf("SHELL ok: pid=%d tunnel=%d (client asked %d)\n", sv[3], tunnel, clientTunnel)
-		stdin := append(protoStrBytes(1, []byte("echo hi\r\n")), appendUvarint(nil, 8<<3)...)
+		stdin := append(protoStrBytes(1, []byte("echo \u4e2d\u6587\u6d4b\u8bd5\r\n")), appendUvarint(nil, 8<<3)...)
 		stdin = appendUvarint(stdin, tunnel)
 		env := makeEnvelope(53, 22, stdin)
 		st, err := sess.OpenStream()
@@ -494,7 +494,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		}
 		out := ""
 		firstSeq := int64(-1)
-		for i := 0; i < 4 && !strings.Contains(out, "hi") ; i++ {
+		for i := 0; i < 6 && !strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5\r\n\u4e2d\u6587\u6d4b\u8bd5") ; i++ {
 			rs, err := sess.AcceptStream()
 			if err != nil {
 				break
@@ -513,7 +513,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			}
 			rs.Close()
 		}
-		fmt.Printf("SHELL OUT (first-seq=%d): %q\n", firstSeq, out)
+		fmt.Printf("SHELL OUT (first-seq=%d, utf8-chinese=%v): %q\n", firstSeq, strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5"), out)
 		closeEnv := makeEnvelope(54, 23, appendUvarint(appendUvarint(nil, 8<<3), tunnel))
 		if cs, cerr := sess.OpenStream(); cerr == nil {
 			_ = writeFrame(cs, rawSignature(serverPriv, serverPub, closeEnv), closeEnv)
@@ -739,6 +739,9 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	}
 	return env
 }
+
+
+
 
 
 
