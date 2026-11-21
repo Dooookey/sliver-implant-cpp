@@ -4,7 +4,7 @@ function(sliver_apply_warnings target)
   if(MSVC)
     target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
     # noise that adds no value for portable C
-    target_compile_options(${target} PRIVATE /wd4100 /wd4189 /wd4204 /wd4221)
+    target_compile_options(${target} PRIVATE /wd4100 /wd4189 /wd4204 /wd4221 /wd4200)
     if(IMPLANT_WERROR)
       target_compile_options(${target} PRIVATE /WX)
     endif()

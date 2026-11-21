@@ -117,7 +117,11 @@ set(SLIVER_CORE_SOURCES
   src/core/config.c
   src/core/log.c
   src/platform/${SLIVER_PLATFORM_DIR}/thread.c
+  src/platform/${SLIVER_PLATFORM_DIR}/net.c
 )
+if(IMPLANT_CRYPTO)
+  list(APPEND SLIVER_CORE_SOURCES src/transport/tls_client.c)
+endif()
 
 add_library(sliver_core STATIC ${SLIVER_CORE_SOURCES} "${SLIVER_GEN_DIR}/implant_secrets.c")
 target_include_directories(sliver_core

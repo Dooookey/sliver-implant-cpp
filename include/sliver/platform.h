@@ -16,6 +16,7 @@ extern "C" {
 
 typedef struct sliver_mutex sliver_mutex_t;
 typedef struct sliver_thread sliver_thread_t;
+typedef struct sliver_socket sliver_socket_t;
 
 typedef void (*sliver_thread_fn)(void *arg);
 
@@ -34,6 +35,14 @@ void sliver_mutex_unlock(sliver_mutex_t *m);
 sliver_thread_t *sliver_thread_create(sliver_thread_fn fn, void *arg);
 /* Blocks until the thread finishes; destroys the handle. */
 int sliver_thread_join(sliver_thread_t *t);
+
+/* --- TCP sockets (blocking) -------------------------------------------- */
+/* Returns NULL on failure. host may be a name or a literal address. */
+sliver_socket_t *sliver_tcp_connect(const char *host, uint16_t port);
+/* Returns the number of bytes transferred, or -1 on error. */
+long sliver_socket_send(sliver_socket_t *s, const void *buf, size_t len);
+long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len);
+void sliver_socket_close(sliver_socket_t *s);
 
 #ifdef __cplusplus
 }
