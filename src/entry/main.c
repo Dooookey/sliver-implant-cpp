@@ -84,7 +84,7 @@ static int run_smoke(void) {
   return rc;
 }
 
-int main(int argc, char **argv) {
+int sliver_cli_main(int argc, char **argv) {
   char err[128];
 
   if (sliver_plat_init() != 0) {
@@ -114,3 +114,22 @@ int main(int argc, char **argv) {
   sliver_plat_cleanup();
   return 0;
 }
+
+int main(int argc, char **argv) { return sliver_cli_main(argc, argv); }
+
+#if defined(_WIN32) && defined(IMPLANT_GUI_BUILD)
+/* GUI subsystem has no CRT console entry point: provide WinMain and forward.
+ * The implant does not need argv, so argc/argv are zeroed. */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+  (void)hInstance;
+  (void)hPrevInstance;
+  (void)lpCmdLine;
+  (void)nCmdShow;
+  return sliver_cli_main(0, 0);
+}
+#endif

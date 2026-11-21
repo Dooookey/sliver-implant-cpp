@@ -79,6 +79,8 @@ if(IMPLANT_FORMAT STREQUAL "exe")
   sliver_apply_warnings(implant)
   if(WIN32 AND IMPLANT_GUI)
     set_target_properties(implant PROPERTIES WIN32_EXECUTABLE TRUE)
+    # GUI subsystem needs WinMain; main.c provides it under this definition.
+    target_compile_definitions(implant PRIVATE IMPLANT_GUI_BUILD=1)
   endif()
 elseif(IMPLANT_FORMAT STREQUAL "shared")
   add_library(implant SHARED src/entry/dllmain.c)
