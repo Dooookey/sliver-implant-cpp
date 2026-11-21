@@ -410,3 +410,120 @@ int sliver_ping_decode_nonce(const void *data, size_t len, int32_t *nonce) {
   }
   return rc == 1 ? 0 : -1;
 }
+
+/* --- Ls / Pwd (P1.1) ---------------------------------------------------- */
+
+int sliver_request_field(const void *data, size_t len, const uint8_t **out, size_t *out_len) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL || out_len == NULL) {
+    return -1;
+  }
+  *out = NULL;
+  *out_len = 0;
+  if (data == NULL) {
+    return 0;
+  }
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 9 && wire == 2) {
+      const uint8_t *p;
+      size_t n;
+      if (sliver_reader_bytes(&r, &p, &n) != 0) {
+        return -1;
+      }
+      *out = p;
+      *out_len = n;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_ls_req_decode(const void *data, size_t len, char *path, size_t cap) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (path == NULL || cap == 0) {
+    return -1;
+  }
+  path[0] = '\0';
+  if (data == NULL) {
+    return 0;
+  }
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, path, cap) != 0) {
+        return -1;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+static int encode_file_info(sliver_buf_t *out, const sliver_file_info_t *f) {
+  sliver_buf_t entry;
+  int rc = -1;
+
+  sliver_buf_init(&entry);
+  if (sliver_buf_put_string(&entry, 1, f->name) != 0 ||
+      sliver_buf_put_bool(&entry, 2, f->is_dir) != 0 ||
+      sliver_buf_put_int64(&entry, 3, f->size) != 0 ||
+      sliver_buf_put_int64(&entry, 4, f->mtime) != 0 ||
+      sliver_buf_put_string(&entry, 5, f->mode) != 0 ||
+      (f->link[0] != '\0' && sliver_buf_put_string(&entry, 6, f->link) != 0) ||
+      (f->uid[0] != '\0' && sliver_buf_put_string(&entry, 7, f->uid) != 0) ||
+      (f->gid[0] != '\0' && sliver_buf_put_string(&entry, 8, f->gid) != 0)) {
+    goto out;
+  }
+  rc = sliver_buf_put_bytes(out, 3, entry.data, entry.len);
+out:
+  sliver_buf_free(&entry);
+  return rc;
+}
+
+int sliver_ls_encode(sliver_buf_t *out, const char *path, int exists,
+                     const sliver_file_info_t *files, size_t count) {
+  size_t i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, path != NULL ? path : "") != 0) {
+    return -1;
+  }
+  if (exists && sliver_buf_put_bool(out, 2, 1) != 0) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    if (encode_file_info(out, &files[i]) != 0) {
+      return -1;
+    }
+  }
+  /* Empty commonpb.Response keeps the client-side GetResponse() non-nil. */
+  if (sliver_buf_put_tag(out, 9, 2) != 0 || sliver_buf_put_varint(out, 0) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int sliver_pwd_encode(sliver_buf_t *out, const char *path) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, path != NULL ? path : "") != 0) {
+    return -1;
+  }
+  if (sliver_buf_put_tag(out, 9, 2) != 0 || sliver_buf_put_varint(out, 0) != 0) {
+    return -1;
+  }
+  return 0;
+}
+

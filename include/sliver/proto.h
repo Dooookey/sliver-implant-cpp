@@ -97,9 +97,40 @@ int sliver_register_decode(const void *data, size_t len, sliver_register_t *out)
 int sliver_ping_encode(sliver_buf_t *out, int32_t nonce);
 int sliver_ping_decode_nonce(const void *data, size_t len, int32_t *nonce);
 
+/* --- Ls / LsReq (P1.1) -------------------------------------------------- */
+#define SLIVER_FILE_MAX_NAME 256
+#define SLIVER_FILE_MAX_LINK 256
+
+typedef struct {
+  char name[SLIVER_FILE_MAX_NAME];
+  int is_dir;
+  int64_t size;
+  int64_t mtime;
+  char mode[16];
+  char link[SLIVER_FILE_MAX_LINK];
+  char uid[16];
+  char gid[16];
+} sliver_file_info_t;
+
+/* LsReq.Path (field 1); missing path yields an empty string. */
+int sliver_ls_req_decode(const void *data, size_t len, char *path, size_t cap);
+/* Ls{Path=1, Exists=2, Files=3, Response=9}. An empty commonpb.Response is
+ * always emitted so the client's GetResponse() is non-nil. */
+int sliver_ls_encode(sliver_buf_t *out, const char *path, int exists,
+                     const sliver_file_info_t *files, size_t count);
+/* Pwd{Path=1, Response=9}. */
+int sliver_pwd_encode(sliver_buf_t *out, const char *path);
+/* PwdReq has no fields of interest; it only carries commonpb.Request (field 9).
+ * Copies that nested blob when present. */
+int sliver_request_field(const void *data, size_t len, const uint8_t **out, size_t *out_len);
+
 /* --- message type ids (protobuf/sliverpb/constants.go, append only) ---- */
 #define SLIVER_MSG_REGISTER 1u
 #define SLIVER_MSG_PING 3u
+#define SLIVER_MSG_LS_REQ 5u
+#define SLIVER_MSG_LS 6u
+#define SLIVER_MSG_PWD_REQ 12u
+#define SLIVER_MSG_PWD 13u
 #define SLIVER_MSG_BEACON_REGISTER 93u
 #define SLIVER_MSG_BEACON_TASKS 94u
 

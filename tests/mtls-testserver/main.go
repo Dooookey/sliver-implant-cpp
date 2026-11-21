@@ -325,6 +325,72 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		string(rb[1]), string(rb[2]), string(rb[7]), string(rb[8]), int64(rv[9]),
 		string(rb[16]), string(rb[11]))
 
+	// RPC: MsgLsReq(5) with LsReq{Path:"."} - the implant must answer with\r
+	// MsgLs(6) carrying the directory listing.
+	lsStream, err := sess.OpenStream()
+	if err != nil {
+		log.Printf("open ls stream: %v", err)
+		return
+	}
+	lsReq := append([]byte{0x0a, 0x01, 0x2e}, 0x4a, 0x00) // Path "." + empty Request
+	lsEnv := append([]byte{0x08, 0x2a, 0x10, 0x05, 0x1a, byte(len(lsReq))}, lsReq...)
+	if err := writeFrame(lsStream, rawSignature(serverPriv, serverPub, lsEnv), lsEnv); err != nil {
+		log.Printf("write ls req: %v", err)
+		return
+	}
+	respStream, err := sess.AcceptStream()
+	if err != nil {
+		log.Printf("accept ls response stream: %v", err)
+		return
+	}
+	lsSig, lsResp, err := readFrame(respStream)
+	if err != nil {
+		log.Printf("no ls response: %v", err)
+		return
+	}
+	if !ed25519.Verify(clientPub, lsResp, lsSig[10:]) {
+		log.Printf("ls response signature INVALID")
+		return
+	}
+	lv, lb := envelopeFields(lsResp)
+	if lv[2] != 6 {
+		log.Printf("expected MsgLs(6), got %d", lv[2])
+		return
+	}
+	path, files := parseLs(lb[3])
+	fmt.Printf("LS ok: id=%d path=%q entries=%d first=%v\n", lv[1], path, len(files), firstN(files, 3))
+	lsStream.Close()
+
+	// RPC: MsgPwdReq(12) -> MsgPwd(13) with the working directory.
+	pwdStream, err := sess.OpenStream()
+	if err != nil {
+		log.Printf("open pwd stream: %v", err)
+		return
+	}
+	pwdEnv := []byte{0x08, 0x2b, 0x10, 0x0c, 0x1a, 0x02, 0x4a, 0x00}
+	if err := writeFrame(pwdStream, rawSignature(serverPriv, serverPub, pwdEnv), pwdEnv); err != nil {
+		log.Printf("write pwd req: %v", err)
+		return
+	}
+	pwdRespStream, err := sess.AcceptStream()
+	if err != nil {
+		log.Printf("accept pwd response stream: %v", err)
+		return
+	}
+	pwdSig, pwdResp, err := readFrame(pwdRespStream)
+	if err != nil {
+		log.Printf("no pwd response: %v", err)
+		return
+	}
+	if !ed25519.Verify(clientPub, pwdResp, pwdSig[10:]) {
+		log.Printf("pwd response signature INVALID")
+		return
+	}
+	pv, pb := envelopeFields(pwdResp)
+	_, pwdBody := envelopeFields(pb[3])
+	fmt.Printf("PWD ok: type=%d id=%d cwd=%q\n", pv[2], pv[1], string(pwdBody[1]))
+	pwdStream.Close()
+
 	// Server initiated stream -> signed Ping; the implant should answer with
 	// Envelope{ID, UnknownMessageType:true}.
 	srvStream, err := sess.OpenStream()
@@ -341,7 +407,12 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	}
 	log.Printf("sent signed Ping on server stream %d", srvStream.StreamID())
 
-	sig2, env2, err := readFrame(srvStream)
+	replyStream, err := sess.AcceptStream()
+	if err != nil {
+		log.Printf("accept unknown-type reply stream: %v", err)
+		return
+	}
+	sig2, env2, err := readFrame(replyStream)
 	if err != nil {
 		log.Printf("no reply from implant: %v", err)
 		return
@@ -353,6 +424,59 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	v2, _ := envelopeFields(env2)
 	fmt.Printf("IMPLANT REPLY ok: type=%d id=%d unknown-type=%d\n", v2[2], v2[1], v2[4])
 	srvStream.Close()
+}
+
+
+
+
+
+
+// parseLs decodes Ls{Path=1, Exists=2, Files=3 repeat FileInfo{Name=1,...}}.
+func parseLs(body []byte) (string, []string) {
+	path := ""
+	var files []string
+	i := 0
+	for i < len(body) {
+		key, n := binary.Uvarint(body[i:])
+		if n <= 0 {
+			break
+		}
+		i += n
+		field, wire := key>>3, key&7
+		if wire == 2 {
+			l, n2 := binary.Uvarint(body[i:])
+			if n2 <= 0 {
+				break
+			}
+			i += n2
+			val := body[i : i+int(l)]
+			i += int(l)
+			if field == 1 {
+				path = string(val)
+			}
+			if field == 3 {
+				// FileInfo: first length-delimited field (1) is the name.
+				_, fb := envelopeFields(val)
+				files = append(files, string(fb[1]))
+			}
+		} else if wire == 0 {
+			_, n2 := binary.Uvarint(body[i:])
+			if n2 <= 0 {
+				break
+			}
+			i += n2
+		} else {
+			break
+		}
+	}
+	return path, files
+}
+
+func firstN(values []string, n int) []string {
+	if len(values) < n {
+		return values
+	}
+	return values[:n]
 }
 
 
