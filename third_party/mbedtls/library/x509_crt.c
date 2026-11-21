@@ -1200,7 +1200,13 @@ static int x509_crt_parse_der_core(mbedtls_x509_crt *crt,
         return MBEDTLS_ERROR_ADD(MBEDTLS_ERR_X509_INVALID_FORMAT, ret);
     }
 
-    if ((ret = mbedtls_x509_get_name(&p, p + len, &crt->issuer)) != 0) {
+    /*
+     * Sliver patch: Go's crypto/x509 encodes an empty Distinguished Name as a
+     * zero length SEQUENCE (Sliver CA certificates have an empty issuer). The
+     * subject path below already tolerates len == 0, the issuer path did not
+     * and failed the whole certificate with MBEDTLS_ERR_X509_INVALID_NAME.
+     */
+    if (len && (ret = mbedtls_x509_get_name(&p, p + len, &crt->issuer)) != 0) {
         mbedtls_x509_crt_free(crt);
         return ret;
     }

@@ -453,3 +453,37 @@ const char *sliver_tls_ciphersuite(sliver_tls_t *conn) {
 
 void sliver_tls_close(sliver_tls_t *conn) { tls_free(conn); }
 
+int sliver_tls_check_cert(const char *pem, char *err, size_t err_len) {
+  mbedtls_x509_crt crt;
+  char *normalized;
+  size_t der_len = 0;
+  int rc;
+
+  if (pem == NULL) {
+    set_err(err, err_len, "no certificate");
+    return -1;
+  }
+  normalized = normalize_pem(pem);
+  if (normalized == NULL) {
+    set_err(err, err_len, "out of memory");
+    return -1;
+  }
+  mbedtls_x509_crt_init(&crt);
+  rc = parse_cert_chain(&crt, normalized, &der_len);
+  if (rc != 0) {
+    char detail[96];
+    mbedtls_strerror(rc, detail, sizeof(detail));
+    if (err != NULL) {
+      (void)snprintf(err, err_len,
+                     "unusable certificate (rc=-0x%04x %s, pem=%u bytes, der=%u bytes)",
+                     -rc, detail, (unsigned)strlen(normalized), (unsigned)der_len);
+    }
+  } else if (err != NULL) {
+    (void)snprintf(err, err_len, "ok (pem=%u bytes, der=%u bytes)",
+                   (unsigned)strlen(normalized), (unsigned)der_len);
+  }
+  mbedtls_x509_crt_free(&crt);
+  free(normalized);
+  return rc == 0 ? 0 : -1;
+}
+

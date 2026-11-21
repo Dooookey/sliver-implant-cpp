@@ -143,14 +143,21 @@ type fixture struct {
 	key             *ecdsa.PrivateKey
 }
 
-func newCA() (*x509.Certificate, *ecdsa.PrivateKey, *fixture, error) {
+func caSubject(emptyName bool) pkix.Name {
+	if emptyName {
+		return pkix.Name{}
+	}
+	return pkix.Name{CommonName: "sliver-cpp test CA"}
+}
+
+func newCA(emptyName bool) (*x509.Certificate, *ecdsa.PrivateKey, *fixture, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "sliver-cpp test CA"},
+		Subject:               caSubject(emptyName),
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour),
 		IsCA:                  true,
@@ -201,6 +208,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:9446", "listen address")
 	agePriv := flag.String("age-priv", "", "age private key string the implant uses")
 	outDir := flag.String("out", "build/mtls-fixtures", "fixture directory")
+	emptyCA := flag.Bool("empty-ca", false, "generate the CA with an empty subject/issuer (Sliver style)")
 	flag.Parse()
 
 	if *agePriv == "" {
@@ -215,7 +223,7 @@ func main() {
 	serverPriv := ed25519.NewKeyFromSeed(serverSeed[:])
 	serverPub := serverPriv.Public().(ed25519.PublicKey)
 
-	caCert, caKey, ca, err := newCA()
+	caCert, caKey, ca, err := newCA(*emptyCA)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -346,5 +354,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	fmt.Printf("IMPLANT REPLY ok: type=%d id=%d unknown-type=%d\n", v2[2], v2[1], v2[4])
 	srvStream.Close()
 }
+
+
 
 

@@ -587,7 +587,10 @@ int sliver_cli_main(int argc, char **argv) {
     if (ca == NULL) {
       (void)printf("no CA certificate\n");
     } else {
+      char check[192];
+      (void)sliver_tls_check_cert(ca, check, sizeof(check));
       (void)printf("--- ca begin (len=%u) ---\n%s\n--- ca end ---\n", (unsigned)strlen(ca), ca);
+      (void)printf("parse: %s\n", check);
     }
     free(owned);
     sliver_plat_cleanup();

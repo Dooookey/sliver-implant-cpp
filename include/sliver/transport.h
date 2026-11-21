@@ -37,6 +37,10 @@ void sliver_tls_close(sliver_tls_t *conn);
 #define SLIVER_YAMUX_PREFACE "MUX/1"
 #define SLIVER_YAMUX_PREFACE_LEN 5
 
+/* Parses a CA/certificate PEM exactly like the TLS client does; used by the
+ * --dump-ca diagnostic to show whether an injected blob is usable. */
+int sliver_tls_check_cert(const char *pem, char *err, size_t err_len);
+
 #ifdef __cplusplus
 }
 #endif
