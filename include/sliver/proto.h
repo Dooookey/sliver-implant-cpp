@@ -226,7 +226,8 @@ int sliver_shell_encode(sliver_buf_t *out, const char *path, int pty, uint32_t p
 /* TunnelData{Data=1,Closed=2,Sequence=3,Ack=4,TunnelID=8}. */
 int sliver_tunnel_data_decode(const void *data, size_t len, sliver_tunnel_data_t *out);
 int sliver_tunnel_data_encode(sliver_buf_t *out, const void *payload, size_t payload_len,
-                              int closed, uint64_t sequence, uint64_t tunnel_id);
+                              int closed, uint64_t sequence, uint64_t tunnel_id,
+                              uint64_t ack);
 #define SLIVER_EXEC_MAX_ARGS 32
 
 typedef struct {
@@ -280,5 +281,6 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 
 

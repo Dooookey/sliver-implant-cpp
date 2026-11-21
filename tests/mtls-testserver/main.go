@@ -454,6 +454,9 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			string(db[6]) == string(payload), len(db[6]), string(db[6]))
 	}
 	cmdExe := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	if _, statErr := os.Stat(cmdExe); statErr != nil {
+		log.Printf("cmd.exe missing (%q): %v", cmdExe, statErr)
+	}
 	exReq := append(protoStr(1, cmdExe), protoStr(2, "/c")...)
 	exReq = append(exReq, protoStr(2, "echo hi")...)
 	exReq = append(exReq, 0x18, 0x01) // Output = true
@@ -461,8 +464,9 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		log.Printf("execute failed: %v", err)
 	} else {
 		ev, eb := envelopeFields(exBody[3])
-		fmt.Printf("EXECUTE ok: status=%d pid=%d stdout=%q stderr=%q\n",
-			ev[1], ev[4], string(eb[2]), string(eb[3]))
+		_, er := envelopeFields(eb[9])
+		fmt.Printf("EXECUTE ok: status=%d pid=%d stdout=%q stderr=%q err=%q\n",
+			ev[1], ev[4], string(eb[2]), string(eb[3]), string(er[1]))
 	}
 	_ = os.Remove(tmpFile)
 
@@ -482,9 +486,10 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	if _, shBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 52, 20, shReq, 21); err != nil {
 		log.Printf("shell failed: %v", err)
 	} else {
-		sv, _ := envelopeFields(shBody[3])
+		sv, sb := envelopeFields(shBody[3])
 		tunnel := sv[8]
-		fmt.Printf("SHELL ok: pid=%d tunnel=%d (client asked %d)\n", sv[3], tunnel, clientTunnel)
+		_, shr := envelopeFields(sb[9])
+		fmt.Printf("SHELL ok: pid=%d tunnel=%d (client asked %d) err=%q\n", sv[3], tunnel, clientTunnel, string(shr[1]))
 		stdin := append(protoStrBytes(1, []byte("echo \u4e2d\u6587\u6d4b\u8bd5\r\n")), appendUvarint(nil, 8<<3)...)
 		stdin = appendUvarint(stdin, tunnel)
 		env := makeEnvelope(53, 22, stdin)
@@ -494,6 +499,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		}
 		out := ""
 		firstSeq := int64(-1)
+		var ackSeen uint64
 		for i := 0; i < 6 && !strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5\r\n\u4e2d\u6587\u6d4b\u8bd5") ; i++ {
 			rs, err := sess.AcceptStream()
 			if err != nil {
@@ -506,14 +512,17 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			v, b := envelopeFields(envOut)
 			if v[2] == 22 {
 				tv, db := envelopeFields(b[3])
-				if firstSeq < 0 {
+				if tv[4] != 0 {
+					ackSeen = tv[4]
+				} else if firstSeq < 0 {
 					firstSeq = int64(tv[3])
+				} else {
+					out += string(db[1])
 				}
-				out += string(db[1])
 			}
 			rs.Close()
 		}
-		fmt.Printf("SHELL OUT (first-seq=%d, utf8-chinese=%v): %q\n", firstSeq, strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5"), out)
+		fmt.Printf("SHELL OUT (first-seq=%d, ack=%d, utf8-chinese=%v)\n", firstSeq, ackSeen, strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5"))
 		closeEnv := makeEnvelope(54, 23, appendUvarint(appendUvarint(nil, 8<<3), tunnel))
 		if cs, cerr := sess.OpenStream(); cerr == nil {
 			_ = writeFrame(cs, rawSignature(serverPriv, serverPub, closeEnv), closeEnv)
@@ -739,6 +748,8 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	}
 	return env
 }
+
+
 
 
 
