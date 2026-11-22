@@ -18,6 +18,7 @@
 #include <stdint.h>
 
 #include "sliver/frame.h"
+#include "sliver/platform.h"
 #include "sliver/proto.h"
 
 #ifdef __cplusplus
@@ -51,6 +52,9 @@ typedef struct {
    * (the slot may already be released), it is the ACK of our own SYN. */
   uint32_t local_ids[SLIVER_YAMUX_MAX_STREAMS];
   size_t local_count;
+  /* Serialises frame writes: open/write/close and the pump (ACK/window updates)
+   * run on different threads, and interleaved headers corrupt the stream. */
+  sliver_mutex_t *write_lock;
 } sliver_yamux_t;
 
 int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
@@ -79,4 +83,6 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id);
 #endif
 
 #endif /* SLIVER_YAMUX_H */
+
+
 

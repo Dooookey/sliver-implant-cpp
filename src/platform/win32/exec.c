@@ -20,6 +20,22 @@ static void drain(HANDLE h, sliver_buf_t *out) {
   }
 }
 
+/* Reads whatever is already buffered without blocking. */
+static void drain_available(HANDLE h, sliver_buf_t *out) {
+  char buf[4096];
+  for (;;) {
+    DWORD avail = 0;
+    DWORD got = 0;
+    if (!PeekNamedPipe(h, NULL, 0, NULL, &avail, NULL) || avail == 0) {
+      return;
+    }
+    if (!ReadFile(h, buf, sizeof(buf), &got, NULL) || got == 0) {
+      return;
+    }
+    (void)sliver_buf_append(out, buf, got);
+  }
+}
+
 /* CreateProcess does not search PATH reliably for a bare name: resolve it first
  * so `execute -o cmd /c ...` works like it does in the Go implant. */
 static void resolve_exe(const char *path, char *out, size_t cap) {
@@ -107,7 +123,27 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
     (void)CloseHandle(out_w);
     (void)CloseHandle(err_w);
   }
-  (void)WaitForSingleObject(pi.hProcess, 60000);
+  /* Drain while waiting: waiting first would let the child block on a full pipe
+   * (64 KiB) and produce truncated output / a leftover process. */
+  {
+    DWORD deadline = GetTickCount() + 60000;
+    for (;;) {
+      DWORD wait;
+      if (capture) {
+        drain_available(out_r, out);
+        drain_available(err_r, err);
+      }
+      wait = WaitForSingleObject(pi.hProcess, 20);
+      if (wait == WAIT_OBJECT_0) {
+        break;
+      }
+      if (GetTickCount() > deadline) {
+        (void)TerminateProcess(pi.hProcess, 1);
+        (void)WaitForSingleObject(pi.hProcess, 5000);
+        break;
+      }
+    }
+  }
   if (capture) {
     drain(out_r, out);
     drain(err_r, err);
@@ -272,6 +308,7 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+
 
 
 

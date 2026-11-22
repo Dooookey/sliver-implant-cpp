@@ -1,6 +1,8 @@
 /* src/core/log.c - levelled logger writing to stderr (and optionally a file). */
 #include "sliver/log.h"
 
+#include "sliver/platform.h"
+
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +10,14 @@
 
 static sliver_log_level_t g_level = SLIVER_LOG_INFO;
 static FILE *g_file = NULL;
+static sliver_mutex_t *g_lock = NULL;
+
+/* Must be called once before any other thread starts logging. */
+void sliver_log_init(void) {
+  if (g_lock == NULL) {
+    g_lock = sliver_mutex_create();
+  }
+}
 
 static const char *level_name(sliver_log_level_t level) {
   switch (level) {
@@ -53,10 +63,16 @@ int sliver_log_set_file(const char *path) {
   if (f == NULL) {
     return -1;
   }
+  if (g_lock != NULL) {
+    sliver_mutex_lock(g_lock);
+  }
   if (g_file != NULL) {
     (void)fclose(g_file);
   }
   g_file = f;
+  if (g_lock != NULL) {
+    sliver_mutex_unlock(g_lock);
+  }
   return 0;
 }
 
@@ -78,11 +94,22 @@ void sliver_log_write(sliver_log_level_t level, const char *fmt, ...) {
   (void)vsnprintf(message, sizeof(message), fmt, ap);
   va_end(ap);
 
+  /* Drop a trailing newline so callers may format either way. */
+  {
+    size_t len = strlen(message);
+    while (len > 0 && (message[len - 1] == '\n' || message[len - 1] == '\r')) {
+      message[--len] = 0;
+    }
+  }
   (void)fprintf(stderr, "[%-5s] %s\n", level_name(level), message);
   if (g_file != NULL) {
     (void)fprintf(g_file, "[%-5s] %s\n", level_name(level), message);
     (void)fflush(g_file);
   }
 }
+
+
+
+
 
 

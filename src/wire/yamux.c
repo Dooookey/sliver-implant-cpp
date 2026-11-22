@@ -82,18 +82,25 @@ static int io_write_full(sliver_yamux_t *y, const void *buf, size_t len) {
 static int send_frame(sliver_yamux_t *y, uint8_t type, uint16_t flags, uint32_t stream_id,
                       const void *payload, uint32_t length) {
   uint8_t header[12];
+  int rc;
   header[0] = YAMUX_VERSION;
   header[1] = type;
   put_u16_be(header + 2, flags);
   put_u32_be(header + 4, stream_id);
   put_u32_be(header + 8, length);
-  if (io_write_full(y, header, sizeof(header)) != 0) {
-    return -1;
+  /* open/write/close and the pump (ACK, window updates) run on different
+   * threads: without this lock two frames interleave and the peer sees garbage. */
+  if (y->write_lock != NULL) {
+    sliver_mutex_lock(y->write_lock);
   }
-  if (length != 0 && payload != NULL && io_write_full(y, payload, length) != 0) {
-    return -1;
+  rc = io_write_full(y, header, sizeof(header));
+  if (rc == 0 && length != 0 && payload != NULL) {
+    rc = io_write_full(y, payload, length);
   }
-  return 0;
+  if (y->write_lock != NULL) {
+    sliver_mutex_unlock(y->write_lock);
+  }
+  return rc;
 }
 
 static void release_stream(sliver_yamux_stream_t *s) {
@@ -175,6 +182,7 @@ int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
    * server's own streams, which corrupted tunnelled traffic and made accepts
    * swallow server requests. */
   y->next_stream_id = 1;
+  y->write_lock = sliver_mutex_create();
   return 0;
 }
 
@@ -183,9 +191,11 @@ void sliver_yamux_free(sliver_yamux_t *y) {
     return;
   }
   for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
-    if (y->streams[i].used) {
-      sliver_buf_free(&y->streams[i].in);
-    }
+    release_stream(&y->streams[i]);
+  }
+  if (y->write_lock != NULL) {
+    sliver_mutex_destroy(y->write_lock);
+    y->write_lock = NULL;
   }
 }
 
@@ -295,6 +305,10 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
       if ((flags & YAMUX_FLAG_SYN) != 0) {
         if (find_stream(y, id) != NULL) {
           /* ACK of a stream we opened ourselves. */
+          if (length != 0) {
+            sliver_yamux_stream_t *own = find_stream(y, id);
+            own->send_window += length;
+          }
           return 0;
         }
         /* Peer initiated stream: acknowledge and remember it for accept. */
@@ -412,6 +426,9 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
     if (rc < 0) {
       return -1;
     }
+    if (rc == 1) {
+      sliver_sleep_ms(2); /* no data yet: do not spin the CPU */
+    }
     /* rc == 1: no frame yet (TLS receive timeout), keep waiting. */
   }
   *stream_id = y->pending_accept;
@@ -449,6 +466,9 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     }
   }
 }
+
+
+
 
 
 

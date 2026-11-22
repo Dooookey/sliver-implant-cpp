@@ -244,11 +244,12 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
     uint32_t sid = 0;
     session_stream_t stream;
     sliver_envelope_t envelope;
-    sliver_rpc_result_t result;
+    sliver_rpc_result_t result = {0};
 
     if (sliver_yamux_accept(&yamux, &sid) != 0) {
+      /* Not a clean end: the caller must reconnect (the Go implant retries). */
       LOG_INFO("session: connection closed");
-      rc = 0;
+      rc = -1;
       break;
     }
     stream.y = &yamux;
@@ -330,6 +331,8 @@ out:
   }
   return rc;
 }
+
+
 
 
 

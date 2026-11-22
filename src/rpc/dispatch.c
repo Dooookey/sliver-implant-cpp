@@ -400,6 +400,7 @@ void sliver_rpc_result_free(sliver_rpc_result_t *result) {
   }
   sliver_buf_free(&result->message);
   result->handled = 0;
+  result->no_response = 0;
   result->resp_type = 0;
 }
 
@@ -411,6 +412,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
   }
   sliver_buf_init(&result->message);
   result->handled = 0;
+  result->no_response = 0;
   result->resp_type = 0;
   if (req == NULL) {
     return;
@@ -440,6 +442,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

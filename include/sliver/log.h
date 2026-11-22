@@ -17,6 +17,7 @@ typedef enum {
   SLIVER_LOG_ERROR
 } sliver_log_level_t;
 
+void sliver_log_init(void);
 void sliver_log_set_level(sliver_log_level_t level);
 sliver_log_level_t sliver_log_get_level(void);
 /* Mirrors log output into a file (append). Returns 0 on success.
@@ -29,6 +30,10 @@ void sliver_log_close_file(void);
 void sliver_log_write(sliver_log_level_t level, const char *fmt, ...);
 
 #define LOG_INFO(...)  sliver_log_write(SLIVER_LOG_INFO, __VA_ARGS__)
+/* Bypasses the level filter *and* the release-mode no-op: use for CLI output
+ * (--version/--dump-ca) and fatal configuration errors that must stay visible in
+ * release builds. */
+#define LOG_ALWAYS(...) sliver_log_write(SLIVER_LOG_ERROR, __VA_ARGS__)
 #define LOG_WARN(...)  sliver_log_write(SLIVER_LOG_WARN, __VA_ARGS__)
 #define LOG_ERROR(...) sliver_log_write(SLIVER_LOG_ERROR, __VA_ARGS__)
 
@@ -51,4 +56,5 @@ void sliver_log_write(sliver_log_level_t level, const char *fmt, ...);
 #endif
 
 #endif /* SLIVER_LOG_H */
+
 
