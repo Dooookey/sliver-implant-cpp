@@ -111,3 +111,13 @@ int sliver_username(char *buf, size_t cap) {
 }
 
 unsigned sliver_current_pid(void) { return (unsigned)getpid(); }
+
+void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
+  struct timeval tv;
+  if (s == NULL) {
+    return;
+  }
+  tv.tv_sec = ms / 1000;
+  tv.tv_usec = (ms % 1000) * 1000;
+  (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}

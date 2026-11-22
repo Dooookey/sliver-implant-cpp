@@ -36,6 +36,12 @@ int sliver_proc_terminate(int32_t pid, int force);
 int sliver_env_list(sliver_env_t **out, size_t *count);
 void sliver_env_free(sliver_env_t *vars);
 
+/* Converts valid UTF-8 into the system ANSI code page (936 on Chinese Windows)
+ * so shell output renders correctly in the Sliver client console. Returns -1
+ * when the input is not UTF-8 or does not fit. */
+int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_cap,
+                         size_t *out_len);
+
 /* Runs `path` with `args`, capturing stdout/stderr when capture != 0.
  * Blocks until the child exits (60s cap on Windows). */
 int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
@@ -59,3 +65,4 @@ void sliver_child_free(sliver_child_t *c);
 #endif
 
 #endif /* SLIVER_PROC_H */
+

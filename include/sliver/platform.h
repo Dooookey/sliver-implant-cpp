@@ -43,6 +43,9 @@ sliver_socket_t *sliver_tcp_connect(const char *host, uint16_t port);
 long sliver_socket_send(sliver_socket_t *s, const void *buf, size_t len);
 long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len);
 void sliver_socket_close(sliver_socket_t *s);
+/* Makes blocking reads return -1 (EAGAIN/WSAETIMEDOUT) after `ms`, so the
+ * reader can release its lock and let writers use the TLS context. */
+void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms);
 
 /* --- identity helpers --------------------------------------------------- */
 int sliver_hostname(char *buf, size_t cap);
@@ -54,3 +57,4 @@ unsigned sliver_current_pid(void);
 #endif
 
 #endif /* SLIVER_PLATFORM_H */
+

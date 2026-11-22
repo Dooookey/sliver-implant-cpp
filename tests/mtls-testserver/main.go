@@ -524,8 +524,9 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			}
 			rs.Close()
 		}
-		fmt.Printf("SHELL OUT (first-seq=%d, ack=%d, frames=%d, big-output-ok=%v, after-big=%v, bytes=%d)\n",
-			firstSeq, ackSeen, frames, len(out) > 4096, strings.Contains(out, "after-big"), len(out))
+		fmt.Printf("SHELL OUT (first-seq=%d, ack=%d, frames=%d, big-output-ok=%v, chinese-ok=%v, bytes=%d)\n",
+			firstSeq, ackSeen, frames, len(out) > 4096,
+			strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5") || strings.Contains(out, "\xd6\xd0\xce\xc4\xb2\xe2\xca\xd4"), len(out))
 		closeEnv := makeEnvelope(54, 23, appendUvarint(appendUvarint(nil, 8<<3), tunnel))
 		if cs, cerr := sess.OpenStream(); cerr == nil {
 			_ = writeFrame(cs, rawSignature(serverPriv, serverPub, closeEnv), closeEnv)
@@ -751,6 +752,8 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	}
 	return env
 }
+
+
 
 
 

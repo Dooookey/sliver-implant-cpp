@@ -40,6 +40,11 @@ static int io_read_full(sliver_yamux_t *y, void *buf, size_t len) {
   size_t got = 0;
   while (got < len) {
     long n = y->read_fn(y->ctx, (uint8_t *)buf + got, len - got);
+    if (n == -2) {
+      /* No data yet (TLS receive timeout): keep what we have and let the caller
+       * retry, releasing the TLS context in between. */
+      return got == 0 ? 1 : -1;
+    }
     if (n <= 0) {
       return -1;
     }
@@ -52,6 +57,9 @@ static int io_write_full(sliver_yamux_t *y, const void *buf, size_t len) {
   size_t sent = 0;
   while (sent < len) {
     long n = y->write_fn(y->ctx, (const uint8_t *)buf + sent, len - sent);
+    if (n == -2) {
+      continue; /* transient WANT_READ: retry the same bytes */
+    }
     if (n <= 0) {
       return -1;
     }
@@ -214,9 +222,15 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
   if (y == NULL || y->failed) {
     return -1;
   }
-  if (io_read_full(y, header, sizeof(header)) != 0) {
-    y->failed = 1;
-    return -1;
+  {
+    int rc = io_read_full(y, header, sizeof(header));
+    if (rc == 1) {
+      return 1; /* no frame yet */
+    }
+    if (rc != 0) {
+      y->failed = 1;
+      return -1;
+    }
   }
   if (header[0] != YAMUX_VERSION) {
     y->failed = 1;
@@ -379,12 +393,15 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
     return -1;
   }
   while (y->pending_accept == 0) {
+    int rc;
     if (y->failed || y->go_away) {
       return -1;
     }
-    if (sliver_yamux_pump(y) != 0) {
+    rc = sliver_yamux_pump(y);
+    if (rc < 0) {
       return -1;
     }
+    /* rc == 1: no frame yet (TLS receive timeout), keep waiting. */
   }
   *stream_id = y->pending_accept;
   y->pending_accept = 0;
@@ -413,11 +430,16 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     if (s->fin_received) {
       return 0;
     }
-    if (sliver_yamux_pump(y) != 0) {
-      return -1;
+    {
+      int prc = sliver_yamux_pump(y);
+      if (prc < 0) {
+        return -1;
+      }
     }
   }
 }
+
+
 
 
 

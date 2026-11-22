@@ -119,3 +119,33 @@ int sliver_env_list(sliver_env_t **out, size_t *count) {
 
 void sliver_env_free(sliver_env_t *vars) { free(vars); }
 
+
+int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_cap,
+                         size_t *out_len) {
+  int wide_len;
+  int acp_len;
+  WCHAR *wide;
+
+  if (in == NULL || out == NULL || out_len == NULL) {
+    return -1;
+  }
+  wide_len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, in, (int)in_len, NULL, 0);
+  if (wide_len <= 0) {
+    return -1; /* not valid UTF-8: leave the caller's bytes untouched */
+  }
+  wide = (WCHAR *)malloc(sizeof(WCHAR) * (size_t)wide_len);
+  if (wide == NULL) {
+    return -1;
+  }
+  if (MultiByteToWideChar(CP_UTF8, 0, in, (int)in_len, wide, wide_len) != wide_len) {
+    free(wide);
+    return -1;
+  }
+  acp_len = WideCharToMultiByte(CP_ACP, 0, wide, wide_len, out, (int)out_cap, NULL, NULL);
+  free(wide);
+  if (acp_len <= 0) {
+    return -1;
+  }
+  *out_len = (size_t)acp_len;
+  return 0;
+}

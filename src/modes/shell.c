@@ -25,7 +25,7 @@
 #include "sliver/proc.h"
 
 #define SLIVER_MAX_TUNNELS 8
-#define SLIVER_SHELL_READ_CHUNK 4096
+#define SLIVER_SHELL_READ_CHUNK 16384
 
 typedef struct {
   uint64_t id;
@@ -136,6 +136,20 @@ static void shell_reader_thread(void *arg) {
     if (n <= 0) {
       break;
     }
+#if defined(_WIN32)
+    /* The client console is usually CP936: hand it ANSI bytes, otherwise every
+     * Chinese character shows up as mojibake. */
+    {
+      size_t converted = 0;
+      char acp[SLIVER_SHELL_READ_CHUNK * 2];
+      if (sliver_acp_from_utf8(buf, (size_t)n, acp, sizeof(acp), &converted) == 0) {
+        if (send_tunnel_data(r->tunnel, acp, converted, 0) != 0) {
+          break;
+        }
+        continue;
+      }
+    }
+#endif
     if (send_tunnel_data(r->tunnel, buf, (size_t)n, 0) != 0) {
       break;
     }
@@ -292,5 +306,6 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return -2; /* piped shells have no window size */
 }
+
 
 

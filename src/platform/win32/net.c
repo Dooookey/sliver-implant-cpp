@@ -107,3 +107,12 @@ int sliver_username(char *buf, size_t cap) {
 }
 
 unsigned sliver_current_pid(void) { return (unsigned)GetCurrentProcessId(); }
+
+void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
+  DWORD tv;
+  if (s == NULL) {
+    return;
+  }
+  tv = (DWORD)ms;
+  (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+}

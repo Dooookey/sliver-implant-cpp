@@ -32,6 +32,7 @@ struct sliver_tls {
   mbedtls_pk_context key;
   mbedtls_ctr_drbg_context drbg;
   mbedtls_entropy_context entropy;
+  sliver_mutex_t *io_lock; /* mbedTLS contexts are not thread safe: serialise R/W */
   int ssl_init;
   int conf_init;
   int ca_init;
@@ -226,6 +227,10 @@ static int bio_recv(void *ctx, unsigned char *buf, size_t len) {
 }
 
 static void tls_free(sliver_tls_t *conn) {
+  if (conn->io_lock != NULL) {
+    sliver_mutex_destroy(conn->io_lock);
+    conn->io_lock = NULL;
+  }
   if (conn == NULL) {
     return;
   }
@@ -396,6 +401,11 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
     tls_free(conn);
     return -1;
   }
+  conn->io_lock = sliver_mutex_create();
+  /* Short receive timeout: the reader releases the TLS context every 100 ms so a
+   * writer thread (shell output, heartbeat) can use it without corrupting the
+   * TLS record stream ("bad record MAC" on the server). */
+  sliver_socket_set_recv_timeout(conn->sock, 100);
   mbedtls_ssl_set_bio(&conn->ssl, conn, bio_send, bio_recv, NULL);
 
   while ((rc = mbedtls_ssl_handshake(&conn->ssl)) != 0) {
@@ -421,7 +431,16 @@ long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {
   if (conn == NULL) {
     return -1;
   }
+  if (conn->io_lock != NULL) {
+    sliver_mutex_lock(conn->io_lock);
+  }
   rc = mbedtls_ssl_write(&conn->ssl, (const unsigned char *)buf, len);
+  if (conn->io_lock != NULL) {
+    sliver_mutex_unlock(conn->io_lock);
+  }
+  if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
+    return -2; /* retry later, nothing was sent */
+  }
   return rc < 0 ? -1 : (long)rc;
 }
 
@@ -430,9 +449,18 @@ long sliver_tls_read(sliver_tls_t *conn, void *buf, size_t len) {
   if (conn == NULL) {
     return -1;
   }
+  if (conn->io_lock != NULL) {
+    sliver_mutex_lock(conn->io_lock);
+  }
   rc = mbedtls_ssl_read(&conn->ssl, (unsigned char *)buf, len);
+  if (conn->io_lock != NULL) {
+    sliver_mutex_unlock(conn->io_lock);
+  }
   if (rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
     return 0;
+  }
+  if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
+    return -2; /* socket receive timeout: let writers through and retry */
   }
   return rc < 0 ? -1 : (long)rc;
 }
@@ -486,4 +514,7 @@ int sliver_tls_check_cert(const char *pem, char *err, size_t err_len) {
   free(normalized);
   return rc == 0 ? 0 : -1;
 }
+
+
+
 
