@@ -187,8 +187,27 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   }
   sock = sliver_tcp_connect(host, (uint16_t)port);
   if (sock == NULL) {
+    char errmsg[256];
     LOG_WARN("portfwd: cannot connect %s:%u", host, (unsigned)port);
-    return -1;
+    /* Answer with a proper error, otherwise the client shows a healthy forward
+     * and every connection just hangs. */
+    (void)snprintf(errmsg, sizeof(errmsg), "portfwd: cannot connect %s:%u", host, (unsigned)port);
+    if (sliver_buf_put_string(out, 3, host) != 0 || sliver_buf_put_uint32(out, 1, port) != 0 ||
+        sliver_buf_put_uint64(out, 8, tunnel_id) != 0) {
+      return -1;
+    }
+    {
+      sliver_buf_t resp;
+      int ok;
+      sliver_buf_init(&resp);
+      if (sliver_buf_put_string(&resp, 1, errmsg) != 0) {
+        sliver_buf_free(&resp);
+        return -1;
+      }
+      ok = sliver_buf_put_bytes(out, 9, resp.data, resp.len);
+      sliver_buf_free(&resp);
+      return ok;
+    }
   }
   sliver_socket_set_recv_timeout(sock, SLIVER_PORTFWD_POLL_MS);
   id = tunnel_id;
@@ -265,4 +284,5 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
 
