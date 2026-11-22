@@ -20,6 +20,22 @@ static void drain(HANDLE h, sliver_buf_t *out) {
   }
 }
 
+/* CreateProcess does not search PATH reliably for a bare name: resolve it first
+ * so `execute -o cmd /c ...` works like it does in the Go implant. */
+static void resolve_exe(const char *path, char *out, size_t cap) {
+  char found[MAX_PATH];
+  DWORD n;
+
+  (void)snprintf(out, cap, "%s", path);
+  if (path == NULL || strchr(path, '\\') != NULL || strchr(path, '/') != NULL) {
+    return;
+  }
+  n = SearchPathA(NULL, path, ".exe", MAX_PATH, found, NULL);
+  if (n > 0 && n < MAX_PATH) {
+    (void)snprintf(out, cap, "%s", found);
+  }
+}
+
 static void append_quoted(char *dst, size_t cap, size_t *offset, const char *arg) {
   int need_quotes = (arg == NULL) || (arg[0] == '\0') || (strpbrk(arg, " \t") != NULL);
   if (need_quotes) {
@@ -74,14 +90,18 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
     offset += (size_t)snprintf(cmdline + offset, sizeof(cmdline) - offset, " ");
     append_quoted(cmdline, sizeof(cmdline), &offset, args[i]);
   }
-  if (!CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-    if (capture) {
-      (void)CloseHandle(out_r);
-      (void)CloseHandle(out_w);
-      (void)CloseHandle(err_r);
-      (void)CloseHandle(err_w);
+  {
+    char resolved[MAX_PATH * 2];
+    resolve_exe(path, resolved, sizeof(resolved));
+    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+      if (capture) {
+        (void)CloseHandle(out_r);
+        (void)CloseHandle(out_w);
+        (void)CloseHandle(err_r);
+        (void)CloseHandle(err_w);
+      }
+      return -1;
     }
-    return -1;
   }
   if (capture) {
     (void)CloseHandle(out_w);
@@ -153,13 +173,17 @@ int sliver_child_spawn(const char *path, const char *const *args, size_t argc,
     offset += (size_t)snprintf(cmdline + offset, sizeof(cmdline) - offset, " ");
     append_quoted(cmdline, sizeof(cmdline), &offset, args[i]);
   }
-  if (!CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &si,
-                      &pi)) {
-    (void)CloseHandle(in_r);
-    (void)CloseHandle(in_w);
-    (void)CloseHandle(out_r);
-    (void)CloseHandle(out_w);
-    return -1;
+  {
+    char resolved[MAX_PATH * 2];
+    resolve_exe(path, resolved, sizeof(resolved));
+    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL,
+                        &si, &pi)) {
+      (void)CloseHandle(in_r);
+      (void)CloseHandle(in_w);
+      (void)CloseHandle(out_r);
+      (void)CloseHandle(out_w);
+      return -1;
+    }
   }
   (void)CloseHandle(in_r);
   (void)CloseHandle(out_w);
@@ -248,4 +272,7 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+
+
+
 

@@ -458,7 +458,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	if _, statErr := os.Stat(cmdExe); statErr != nil {
 		log.Printf("cmd.exe missing (%q): %v", cmdExe, statErr)
 	}
-	exReq := append(protoStr(1, cmdExe), protoStr(2, "/c")...)
+	exReq := append(protoStr(1, "cmd"), protoStr(2, "/c")...)
 	exReq = append(exReq, protoStr(2, "echo hi")...)
 	exReq = append(exReq, 0x18, 0x01) // Output = true
 	// Long running execute must not block the session: send it, then verify Ls
@@ -881,6 +881,7 @@ func startEchoServer() (string, func()) {
 	}()
 	return ln.Addr().String(), func() { _ = ln.Close() }
 }
+
 
 
 
