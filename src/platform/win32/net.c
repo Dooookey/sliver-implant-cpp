@@ -39,6 +39,9 @@ sliver_socket_t *sliver_tcp_connect(const char *host, uint16_t port) {
     if (fd == INVALID_SOCKET) {
       continue;
     }
+    /* Never hand the C2 socket to a spawned child: a killed implant would
+     * otherwise leave the connection (and the session) alive. */
+    (void)SetHandleInformation((HANDLE)fd, HANDLE_FLAG_INHERIT, 0);
     if (connect(fd, it->ai_addr, (int)it->ai_addrlen) == 0) {
       sock = (sliver_socket_t *)calloc(1, sizeof(*sock));
       if (sock != NULL) {
@@ -116,3 +119,4 @@ void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
   tv = (DWORD)ms;
   (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
 }
+

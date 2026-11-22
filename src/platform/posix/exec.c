@@ -115,6 +115,8 @@ struct sliver_child {
   pid_t pid;
 };
 
+unsigned long sliver_child_last_error(void) { return (unsigned long)errno; }
+
 int sliver_child_spawn(const char *path, const char *const *args, size_t argc,
                        sliver_child_t **out, uint32_t *pid_out) {
   int in_pipe[2] = {-1, -1};
@@ -228,4 +230,5 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+
 

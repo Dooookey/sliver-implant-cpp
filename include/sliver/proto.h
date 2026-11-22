@@ -164,6 +164,8 @@ typedef struct {
 /* EnvInfo{Variables=1 repeated commonpb.EnvVar{Key=1,Value=2}, Response=9}. */
 int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t count,
                       const char *err);
+/* CurrentTokenOwner{Output=1, Response=9}. */
+int sliver_current_token_owner_encode(sliver_buf_t *out, const char *who);
 
 /* --- Download / Upload -------------------------------------------------- */
 #define SLIVER_DOWNLOAD_CHUNK (64 * 1024)
@@ -280,6 +282,8 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_TUNNEL_DATA 22u
 #define SLIVER_MSG_TUNNEL_CLOSE 23u
 #define SLIVER_MSG_SHELL_RESIZE_REQ 135u
+#define SLIVER_MSG_CURRENT_TOKEN_OWNER_REQ 100u
+#define SLIVER_MSG_CURRENT_TOKEN_OWNER 101u
 #define SLIVER_MSG_PORTFWD_REQ 80u
 #define SLIVER_MSG_PORTFWD 81u
 #define SLIVER_MSG_BEACON_REGISTER 93u
@@ -290,6 +294,7 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 
 
 

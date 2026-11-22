@@ -1055,3 +1055,15 @@ int sliver_tunnel_resend_encode(sliver_buf_t *out, uint64_t sequence, uint64_t t
   return sliver_buf_put_uint64(out, 8, tunnel_id);
 }
 
+
+/* CurrentTokenOwner{Output=1, Response=9} ? Windows `whoami` asks for the token
+ * owner; answering keeps the command usable on the C implant. */
+int sliver_current_token_owner_encode(sliver_buf_t *out, const char *who) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, who != NULL ? who : "") != 0) {
+    return -1;
+  }
+  return sliver_buf_put_tag(out, 9, 2) == 0 && sliver_buf_put_varint(out, 0) == 0 ? 0 : -1;
+}

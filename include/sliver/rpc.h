@@ -53,6 +53,7 @@ void sliver_shell_shutdown(void);
 
 /* Port forwarding (in-band TCP relay over a tunnel). */
 int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out);
+int sliver_rpc_handle_token_owner(const sliver_envelope_t *req, sliver_buf_t *out);
 int sliver_portfwd_tunnel_data(const sliver_tunnel_data_t *td);
 int sliver_portfwd_bind(uint64_t tunnel_id);
 int sliver_portfwd_tunnel_close(uint64_t tunnel_id);
@@ -72,6 +73,7 @@ int sliver_rpc_execute_async(const sliver_envelope_t *req);
 #endif
 
 #endif /* SLIVER_RPC_H */
+
 
 
 

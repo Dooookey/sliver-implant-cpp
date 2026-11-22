@@ -15,6 +15,10 @@
 /* Launches a child while inheriting ONLY the three std handles: with
  * bInheritHandles=TRUE and no attribute list the child would also inherit the
  * C2 socket, so a killed implant leaves a live connection behind it. */
+static DWORD g_last_error = 0;
+
+unsigned long sliver_child_last_error(void) { return (unsigned long)g_last_error; }
+
 static BOOL spawn_with_std_handles(const char *exe, char *cmdline, HANDLE in, HANDLE out,
                                    HANDLE err, DWORD flags, PROCESS_INFORMATION *pi) {
   STARTUPINFOEXA siex;
@@ -45,11 +49,15 @@ static BOOL spawn_with_std_handles(const char *exe, char *cmdline, HANDLE in, HA
                         flags | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL, &siex.StartupInfo, pi);
   } else {
     /* Fall back to plain inheritance rather than failing the request. */
+    siex.StartupInfo.cb = sizeof(STARTUPINFOA);
     ok = CreateProcessA(exe, cmdline, NULL, NULL, TRUE, flags, NULL, NULL, &siex.StartupInfo, pi);
   }
   if (attrs != NULL) {
     DeleteProcThreadAttributeList(attrs);
     free(attrs);
+  }
+  if (!ok) {
+    g_last_error = GetLastError();
   }
   return ok;
 }
@@ -151,8 +159,8 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   {
     char resolved[MAX_PATH * 2];
     resolve_exe(path, resolved, sizeof(resolved));
-    if (!spawn_with_std_handles(resolved, cmdline, si.hStdInput, si.hStdOutput, si.hStdError, 0,
-                               &pi)) {
+    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+    g_last_error = GetLastError();
       if (capture) {
         (void)CloseHandle(out_r);
         (void)CloseHandle(out_w);
@@ -255,8 +263,9 @@ int sliver_child_spawn(const char *path, const char *const *args, size_t argc,
   {
     char resolved[MAX_PATH * 2];
     resolve_exe(path, resolved, sizeof(resolved));
-    if (!spawn_with_std_handles(resolved, cmdline, si.hStdInput, si.hStdOutput, si.hStdError,
-                               CREATE_NEW_PROCESS_GROUP, &pi)) {
+    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL,
+                        &si, &pi)) {
+    g_last_error = GetLastError();
       (void)CloseHandle(in_r);
       (void)CloseHandle(in_w);
       (void)CloseHandle(out_r);
@@ -351,6 +360,10 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+
+
+
+
 
 
 

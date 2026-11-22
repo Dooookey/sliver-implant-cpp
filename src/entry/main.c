@@ -19,6 +19,7 @@
 #include "sliver/frame.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
+#include "sliver/proc.h"
 #include "sliver/proto.h"
 #include "sliver/session.h"
 #include "sliver/transport.h"
@@ -521,6 +522,31 @@ static int run_from_build_config(const char *argv0) {
   }
 }
 
+static int run_spawn_selftest(void) {
+  const char *argv[2];
+  sliver_child_t *child = NULL;
+  uint32_t pid = 0;
+  char buf[256];
+  long n;
+
+  argv[0] = "/c";
+  argv[1] = "echo spawn-ok";
+  if (sliver_child_spawn("cmd.exe", argv, 2, &child, &pid) != 0) {
+    LOG_ERROR("spawn selftest: cannot start (err %lu)", sliver_child_last_error());
+    return 1;
+  }
+  n = sliver_child_read(child, buf, sizeof(buf) - 1);
+  if (n > 0) {
+    buf[n] = 0;
+    LOG_INFO("spawn selftest: pid=%u output=%s", pid, buf);
+  } else {
+    LOG_INFO("spawn selftest: pid=%u (no output, n=%ld)", pid, n);
+  }
+  sliver_child_close_stdin(child);
+  sliver_child_free(child);
+  return 0;
+}
+
 static void print_diagnostics(void) {
   LOG_INFO("implant   : %s (build %s)\n", sliver_config_name(),
                sliver_config_build_id());
@@ -606,6 +632,11 @@ int sliver_cli_main(int argc, char **argv) {
     return 2;
   }
 
+  if (argc > 1 && strcmp(argv[1], "--spawn-selftest") == 0) {
+    int rc = run_spawn_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--self-test") == 0) {
     int rc = run_smoke();
     sliver_plat_cleanup();
@@ -683,6 +714,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
 
 
 

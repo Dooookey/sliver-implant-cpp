@@ -59,10 +59,13 @@ void sliver_child_close_stdin(sliver_child_t *c);
 int sliver_child_wait(sliver_child_t *c, uint32_t *status_out);
 void sliver_child_terminate(sliver_child_t *c);
 void sliver_child_free(sliver_child_t *c);
+/* Last failure detail for the spawn helpers (GetLastError / errno). */
+unsigned long sliver_child_last_error(void);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* SLIVER_PROC_H */
+
 
