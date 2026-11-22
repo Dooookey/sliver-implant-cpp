@@ -32,6 +32,19 @@ static const struct {
     {"SeSecurityPrivilege", "Manage auditing and security log"},
     {"SeSystemtimePrivilege", "Change the system time"},
     {"SeCreateGlobalPrivilege", "Create global objects"},
+    {"SeIncreaseQuotaPrivilege", "Adjust memory quotas for a process"},
+    {"SeLockMemoryPrivilege", "Lock pages in memory"},
+    {"SeSystemProfilePrivilege", "Profile system performance"},
+    {"SeProfileSingleProcessPrivilege", "Profile single process"},
+    {"SeCreatePagefilePrivilege", "Create a pagefile"},
+    {"SeRemoteShutdownPrivilege", "Force shutdown from a remote system"},
+    {"SeManageVolumePrivilege", "Perform volume maintenance tasks"},
+    {"SeCreateSymbolicLinkPrivilege", "Create symbolic links"},
+    {"SeRelabelPrivilege", "Modify an object label"},
+    {"SeDelegateSessionUserImpersonatePrivilege", "Obtain an impersonation token for another user"},
+    {"SeAuditPrivilege", "Generate security audits"},
+    {"SeSystemEnvironmentPrivilege", "Modify firmware environment values"},
+    {"SeEnableDelegationPrivilege", "Enable computer and user accounts to be trusted for delegation"},
 };
 
 static const char *priv_description(const char *name) {
@@ -135,6 +148,7 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
   (void)CloseHandle(token);
   return count;
 }
+
 
 
 
