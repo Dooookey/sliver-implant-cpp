@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void fill_details(SC_HANDLE scm, const char *name, sliver_service_t *out) {
@@ -149,3 +150,4 @@ int sliver_service_start(const char *name) {
 }
 
 int sliver_revert_to_self(void) { return RevertToSelf() ? 0 : -1; }
+
