@@ -262,8 +262,15 @@ int sliver_portfwd_tunnel_data(const sliver_tunnel_data_t *td) {
   if (td->ack != 0 && td->data_len == 0 && !td->closed) {
     return 1;
   }
+  if (f->sock == NULL) {
+    /* The forward was never established (dial failed): tell the peer to close
+     * instead of letting its connection hang. */
+    (void)forward_send_data(f, NULL, 0, 1);
+    forward_release(f);
+    return 1;
+  }
   if (td->sequence == f->read_sequence) {
-    if (td->data_len != 0 && f->sock != NULL) {
+    if (td->data_len != 0) {
       (void)sliver_socket_send(f->sock, td->data, td->data_len);
     }
     if (td->closed) {
@@ -284,5 +291,6 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
 
 
