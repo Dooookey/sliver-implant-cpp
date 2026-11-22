@@ -133,9 +133,20 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   memset(&pi, 0, sizeof(pi));
 
   si.dwFlags = STARTF_USESTDHANDLES;
+  /* After make-token the process runs as another user (possibly in another
+   * session), where the inherited std handles can be NULL/invalid; handing those
+   * to CreateProcess with STARTF_USESTDHANDLES crashes the caller. Fall back to
+   * a NUL device so the child always gets valid handles. */
   si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
   si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+  if (capture && (si.hStdInput == NULL || si.hStdInput == INVALID_HANDLE_VALUE)) {
+    si.hStdInput = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                               OPEN_EXISTING, 0, NULL);
+    if (si.hStdInput == INVALID_HANDLE_VALUE) {
+      si.hStdInput = NULL;
+    }
+  }
   if (capture) {
     if (!CreatePipe(&out_r, &out_w, &sa, 0) || !SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0)) {
       return -1;
@@ -360,6 +371,7 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+
 
 
 
