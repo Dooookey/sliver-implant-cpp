@@ -47,6 +47,41 @@ static const struct {
     {"SeEnableDelegationPrivilege", "Enable computer and user accounts to be trusted for delegation"},
 };
 
+/* Well-known LUIDs: LookupPrivilegeNameA fails for some impersonation tokens, so
+ * the numeric id is mapped locally. */
+static const struct {
+  unsigned long low;
+  const char *name;
+} kLuidName[] = {
+    {2, "SeCreateTokenPrivilege"},      {3, "SeAssignPrimaryTokenPrivilege"},
+    {4, "SeLockMemoryPrivilege"},       {5, "SeIncreaseQuotaPrivilege"},
+    {6, "SeMachineAccountPrivilege"},   {7, "SeTcbPrivilege"},
+    {8, "SeSecurityPrivilege"},         {9, "SeTakeOwnershipPrivilege"},
+    {10, "SeLoadDriverPrivilege"},      {11, "SeSystemProfilePrivilege"},
+    {12, "SeSystemtimePrivilege"},      {13, "SeProfileSingleProcessPrivilege"},
+    {14, "SeIncreaseBasePriorityPrivilege"}, {15, "SeCreatePagefilePrivilege"},
+    {16, "SeCreatePermanentPrivilege"}, {17, "SeBackupPrivilege"},
+    {18, "SeRestorePrivilege"},         {19, "SeShutdownPrivilege"},
+    {20, "SeDebugPrivilege"},           {21, "SeAuditPrivilege"},
+    {22, "SeSystemEnvironmentPrivilege"}, {23, "SeChangeNotifyPrivilege"},
+    {24, "SeRemoteShutdownPrivilege"},  {25, "SeUndockPrivilege"},
+    {26, "SeSyncAgentPrivilege"},       {27, "SeEnableDelegationPrivilege"},
+    {28, "SeManageVolumePrivilege"},    {29, "SeImpersonatePrivilege"},
+    {30, "SeCreateGlobalPrivilege"},    {31, "SeTrustedCredManAccessPrivilege"},
+    {32, "SeRelabelPrivilege"},         {33, "SeIncreaseWorkingSetPrivilege"},
+    {34, "SeTimeZonePrivilege"},        {35, "SeCreateSymbolicLinkPrivilege"},
+};
+
+static const char *luid_name(unsigned long low) {
+  size_t i;
+  for (i = 0; i < sizeof(kLuidName) / sizeof(kLuidName[0]); ++i) {
+    if (kLuidName[i].low == low) {
+      return kLuidName[i].name;
+    }
+  }
+  return NULL;
+}
+
 static const char *priv_description(const char *name) {
   size_t i;
   for (i = 0; i < sizeof(kPrivDesc) / sizeof(kPrivDesc[0]); ++i) {
@@ -134,8 +169,13 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
     if (!LookupPrivilegeNameA(NULL, &luid, name, &len)) {
       /* Impersonated tokens can carry LUIs this process cannot resolve; keep the
        * row so the client still renders the table. */
-      (void)snprintf(name, sizeof(name), "LUID-0x%08lx%08lx", (unsigned long)luid.HighPart,
-                     (unsigned long)luid.LowPart);
+      const char *known = luid_name((unsigned long)luid.LowPart);
+      if (known != NULL) {
+        (void)snprintf(name, sizeof(name), "%s", known);
+      } else {
+        (void)snprintf(name, sizeof(name), "LUID-0x%08lx%08lx", (unsigned long)luid.HighPart,
+                       (unsigned long)luid.LowPart);
+      }
     }
     (void)snprintf(display, sizeof(display), "%s", priv_description(name));
     (void)snprintf(out[count].name, sizeof(out[count].name), "%s", name);
@@ -212,6 +252,7 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
   (void)CloseHandle(token);
   return count;
 }
+
 
 
 
