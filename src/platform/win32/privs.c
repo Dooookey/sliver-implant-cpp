@@ -132,7 +132,10 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
     LUID luid = privs->Privileges[i].Luid;
 
     if (!LookupPrivilegeNameA(NULL, &luid, name, &len)) {
-      continue;
+      /* Impersonated tokens can carry LUIs this process cannot resolve; keep the
+       * row so the client still renders the table. */
+      (void)snprintf(name, sizeof(name), "LUID-0x%08lx%08lx", (unsigned long)luid.HighPart,
+                     (unsigned long)luid.LowPart);
     }
     (void)snprintf(display, sizeof(display), "%s", priv_description(name));
     (void)snprintf(out[count].name, sizeof(out[count].name), "%s", name);
@@ -209,6 +212,7 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
   (void)CloseHandle(token);
   return count;
 }
+
 
 
 
