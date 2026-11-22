@@ -1,5 +1,6 @@
 /* src/platform/win32/net.c - blocking TCP sockets (Win32). */
 #include "sliver/platform.h"
+#include "sliver/proc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 
 struct sliver_socket {
   SOCKET fd;
@@ -119,4 +121,63 @@ void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
   tv = (DWORD)ms;
   (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
 }
+
+
+/* --- interfaces (ifconfig) ---------------------------------------------- */
+int sliver_net_list(sliver_iface_t *out, int max) {
+  ULONG size = 0;
+  IP_ADAPTER_ADDRESSES *addrs;
+  IP_ADAPTER_ADDRESSES *cur;
+  int count = 0;
+
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                                           GAA_FLAG_SKIP_DNS_SERVER,
+                           NULL, NULL, &size) != ERROR_BUFFER_OVERFLOW) {
+    return -1;
+  }
+  addrs = (IP_ADAPTER_ADDRESSES *)malloc(size);
+  if (addrs == NULL) {
+    return -1;
+  }
+  if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                                           GAA_FLAG_SKIP_DNS_SERVER,
+                           NULL, addrs, &size) != NO_ERROR) {
+    free(addrs);
+    return -1;
+  }
+  for (cur = addrs; cur != NULL && count < max; cur = cur->Next) {
+    IP_ADAPTER_UNICAST_ADDRESS *ua;
+    sliver_iface_t *it = &out[count];
+    memset(it, 0, sizeof(*it));
+    it->index = (int)cur->IfIndex;
+    if (cur->FriendlyName != NULL && cur->FriendlyName[0] != 0) {
+      (void)WideCharToMultiByte(CP_UTF8, 0, cur->FriendlyName, -1, it->name, (int)sizeof(it->name),
+                                NULL, NULL);
+    } else {
+      (void)snprintf(it->name, sizeof(it->name), "%s",
+                     cur->AdapterName != NULL ? cur->AdapterName : "");
+    }
+    if (cur->PhysicalAddressLength >= 6) {
+      (void)snprintf(it->mac, sizeof(it->mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+                     cur->PhysicalAddress[0], cur->PhysicalAddress[1], cur->PhysicalAddress[2],
+                     cur->PhysicalAddress[3], cur->PhysicalAddress[4], cur->PhysicalAddress[5]);
+    }
+    for (ua = cur->FirstUnicastAddress; ua != NULL && it->ip_count < 8; ua = ua->Next) {
+      char host[64];
+      if (getnameinfo(ua->Address.lpSockaddr, ua->Address.iSockaddrLength, host, sizeof(host),
+                      NULL, 0, NI_NUMERICHOST) == 0) {
+        (void)snprintf(it->ips[it->ip_count], sizeof(it->ips[0]), "%s", host);
+        it->ip_count++;
+      }
+    }
+    count++;
+  }
+  free(addrs);
+  return count;
+}
+
+
 

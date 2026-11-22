@@ -5,8 +5,11 @@
 #endif
 
 #include "sliver/platform.h"
+#include "sliver/proc.h"
 
 #include <netdb.h>
+#include <net/if_dl.h>
+#include <ifaddrs.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -126,4 +129,62 @@ void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
   tv.tv_usec = (ms % 1000) * 1000;
   (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
+
+
+/* --- interfaces (ifconfig) ---------------------------------------------- */
+int sliver_net_list(sliver_iface_t *out, int max) {
+  struct ifaddrs *list = NULL;
+  struct ifaddrs *cur;
+  int count = 0;
+  int i;
+
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  if (getifaddrs(&list) != 0) {
+    return -1;
+  }
+  for (i = 0; i < max; ++i) {
+    memset(&out[i], 0, sizeof(out[i]));
+    out[i].index = i;
+  }
+  for (cur = list; cur != NULL && count < max; cur = cur->ifa_next) {
+    char host[64];
+    int idx = -1;
+    /* Group addresses by interface name. */
+    for (i = 0; i < count; ++i) {
+      if (strcmp(out[i].name, cur->ifa_name) == 0) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      idx = count++;
+      (void)snprintf(out[idx].name, sizeof(out[idx].name), "%s", cur->ifa_name != NULL ? cur->ifa_name : "");
+    }
+    if (cur->ifa_addr == NULL) {
+      continue;
+    }
+    if (cur->ifa_addr->sa_family == AF_LINK) {
+      const struct sockaddr_dl *sdl = (const struct sockaddr_dl *)cur->ifa_addr;
+      if (sdl->sdl_alen == 6) {
+        const unsigned char *m = (const unsigned char *)LLADDR(sdl);
+        (void)snprintf(out[idx].mac, sizeof(out[idx].mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+                       m[0], m[1], m[2], m[3], m[4], m[5]);
+      }
+      continue;
+    }
+    if ((cur->ifa_addr->sa_family == AF_INET || cur->ifa_addr->sa_family == AF_INET6) &&
+        out[idx].ip_count < 8) {
+      if (getnameinfo(cur->ifa_addr, cur->ifa_addr->sa_len, host, sizeof(host), NULL, 0,
+                      NI_NUMERICHOST) == 0) {
+        (void)snprintf(out[idx].ips[out[idx].ip_count], sizeof(out[idx].ips[0]), "%s", host);
+        out[idx].ip_count++;
+      }
+    }
+  }
+  freeifaddrs(list);
+  return count;
+}
+
 

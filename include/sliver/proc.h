@@ -69,3 +69,20 @@ unsigned long sliver_child_last_error(void);
 #endif /* SLIVER_PROC_H */
 
 
+
+/* --- network interfaces (ifconfig) -------------------------------------- */
+typedef struct {
+  int index;
+  char name[128];
+  char mac[32];
+  char ips[8][64];
+  int ip_count;
+} sliver_iface_t;
+
+/* Fills up to `max` interfaces; returns the count or -1. */
+int sliver_net_list(sliver_iface_t *out, int max);
+/* Ifconfig{NetInterfaces=1 repeated NetInterface{Index,Name,MAC,IPAddresses}}. */
+int sliver_ifconfig_encode(sliver_buf_t *out, const sliver_iface_t *ifs, int count,
+                           const char *err);
+
+

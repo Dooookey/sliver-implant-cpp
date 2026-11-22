@@ -548,6 +548,23 @@ static int run_spawn_selftest(void) {
   return 0;
 }
 
+#if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
+static int run_ifconfig_selftest(void) {
+  sliver_iface_t ifs[32];
+  int n = sliver_net_list(ifs, (int)(sizeof(ifs) / sizeof(ifs[0])));
+  int i;
+
+  if (n <= 0) {
+    LOG_ERROR("ifconfig selftest: no interfaces (%d)", n);
+    return 1;
+  }
+  for (i = 0; i < n; ++i) {
+    LOG_INFO("ifconfig selftest: [%d] %s mac=%s ips=%d %s", ifs[i].index, ifs[i].name, ifs[i].mac,
+             ifs[i].ip_count, ifs[i].ip_count > 0 ? ifs[i].ips[0] : "");
+  }
+  return 0;
+}
+
 static int run_cp_selftest(const char *src, const char *dst) {
   int64_t written = 0;
   if (sliver_fs_copy(src, dst, &written) != 0) {
@@ -594,6 +611,8 @@ static int run_fs_selftest(void) {
   (void)sliver_fs_remove(c, 0, 1);
   return rc;
 }
+#endif
+
 
 static void print_diagnostics(void) {
   LOG_INFO("implant   : %s (build %s)\n", sliver_config_name(),
@@ -680,6 +699,8 @@ int sliver_cli_main(int argc, char **argv) {
     return 2;
   }
 
+#if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
+  /* Developer-only entry points: not compiled into release builds. */
   if (argc > 3 && strcmp(argv[1], "--cp-selftest") == 0) {
     int rc = run_cp_selftest(argv[2], argv[3]);
     sliver_plat_cleanup();
@@ -692,6 +713,11 @@ int sliver_cli_main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--spawn-selftest") == 0) {
     int rc = run_spawn_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
+  if (argc > 1 && strcmp(argv[1], "--ifconfig-selftest") == 0) {
+    int rc = run_ifconfig_selftest();
     sliver_plat_cleanup();
     return rc;
   }
@@ -710,6 +736,7 @@ int sliver_cli_main(int argc, char **argv) {
     sliver_plat_cleanup();
     return rc;
   }
+#endif
   if (argc > 1 && strcmp(argv[1], "--mtls") == 0) {
     int rc = run_mtls_session(argc, argv);
     sliver_plat_cleanup();
@@ -772,6 +799,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
 
 
 
