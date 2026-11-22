@@ -9,6 +9,10 @@
 #include <string.h>
 
 /* LogonUser + ImpersonateLoggedOnUser, same shape as the Go implant. */
+static unsigned long g_token_error = 0;
+
+unsigned long sliver_token_last_error(void) { return g_token_error; }
+
 int sliver_make_token(const char *username, const char *password, const char *domain,
                       uint32_t logon_type) {
   HANDLE token = NULL;
@@ -21,7 +25,8 @@ int sliver_make_token(const char *username, const char *password, const char *do
   ok = LogonUserA(username, domain != NULL && domain[0] != 0 ? domain : NULL,
                   password != NULL ? password : "", type, LOGON32_PROVIDER_DEFAULT, &token);
   if (!ok) {
-    LOG_DEBUG("token: LogonUser(%s) failed (%lu)", username, (unsigned long)GetLastError());
+    g_token_error = (unsigned long)GetLastError();
+    LOG_DEBUG("token: LogonUser(%s\\%s) failed (%lu)", domain, username, g_token_error);
     return -1;
   }
   ok = ImpersonateLoggedOnUser(token);
@@ -66,3 +71,4 @@ int sliver_get_system(void) {
   (void)CloseHandle(pipe);
   return -1;
 }
+

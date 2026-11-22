@@ -948,7 +948,13 @@ static int handle_make_token(const sliver_envelope_t *req, sliver_buf_t *out) {
     return -1;
   }
   if (sliver_make_token(user, pass, domain, logon_type) != 0) {
-    return sliver_empty_response_encode(out, "make-token: LogonUser/impersonation failed");
+    char err[160];
+    unsigned long code = sliver_token_last_error();
+    (void)snprintf(err, sizeof(err),
+                   "make-token: LogonUser failed (Win32 %lu%s)", code,
+                   code == 1326 ? " = bad user name or password"
+                                : (code == 1385 ? " = logon type not granted" : ""));
+    return sliver_empty_response_encode(out, err);
   }
   LOG_DEBUG("rpc: make-token %s\\%s ok", domain, user);
   return sliver_empty_response_encode(out, NULL);
@@ -1166,6 +1172,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

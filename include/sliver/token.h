@@ -7,5 +7,8 @@
 int sliver_make_token(const char *username, const char *password, const char *domain,
                       uint32_t logon_type);
 int sliver_get_system(void);
+/* Win32 error of the last make-token failure (1326 = bad credentials). */
+unsigned long sliver_token_last_error(void);
 
 #endif
+
