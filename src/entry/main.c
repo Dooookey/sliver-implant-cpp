@@ -551,6 +551,11 @@ int sliver_cli_main(int argc, char **argv) {
     return 1;
   }
 
+#if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
+  /* Debug builds keep verbose logs: tunnel relays are otherwise invisible. */
+  sliver_log_set_level(SLIVER_LOG_DEBUG);
+#endif
+
 #if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG && defined(_WIN32)
   /* Debug builds always leave a log file, even when started from Explorer. */
   {
@@ -681,4 +686,5 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
