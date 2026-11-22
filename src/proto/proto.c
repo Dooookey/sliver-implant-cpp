@@ -1695,3 +1695,43 @@ int sliver_service_name_decode(const void *data, size_t len, char *name, size_t 
   }
   return rc == 1 ? 0 : -1;
 }
+
+/* RegistryReadHiveReq{RootHive=1, RequestedHive=2}. */
+int sliver_reg_hive_req_decode(const void *data, size_t len, char *root, size_t root_cap,
+                               char *requested, size_t req_cap) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (root == NULL || requested == NULL) {
+    return -1;
+  }
+  root[0] = 0;
+  requested[0] = 0;
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (wire == 2 && field == 1) {
+      if (sliver_reader_string(&r, root, root_cap) != 0) return -1;
+    } else if (wire == 2 && field == 2) {
+      if (sliver_reader_string(&r, requested, req_cap) != 0) return -1;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+/* RegistryReadHive{Data=1, Encoder=2, Response=9}. */
+int sliver_reg_hive_encode(sliver_buf_t *out, const uint8_t *data, size_t len, const char *encoder,
+                           const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (len != 0 && sliver_buf_put_bytes(out, 1, data, len) != 0) {
+    return -1;
+  }
+  if (encoder != NULL && encoder[0] != 0 && sliver_buf_put_string(out, 2, encoder) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
