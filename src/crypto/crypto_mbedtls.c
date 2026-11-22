@@ -1,6 +1,7 @@
 /* src/crypto/crypto_mbedtls.c - mbedTLS backed primitives. */
 #include "sliver/crypto.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "mbedtls/chachapoly.h"
@@ -193,3 +194,4 @@ int sliver_x25519_shared(const unsigned char secret[SLIVER_X25519_LEN],
   psa_destroy_key(key_id);
   return rc;
 }
+

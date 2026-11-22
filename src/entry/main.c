@@ -24,6 +24,7 @@
 #include "sliver/registry.h"
 #include "sliver/screenshot.h"
 #include "sliver/services.h"
+#include "sliver/token.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 #include "sliver/session.h"
@@ -570,6 +571,17 @@ static int run_ifconfig_selftest(void) {
 }
 
 #if defined(_WIN32)
+static int run_token_selftest(void) {
+  int rc;
+
+  /* Wrong credentials must fail cleanly (no crash, no impersonation). */
+  rc = sliver_make_token("sliver-no-such-user", "bad-password", ".", 0);
+  LOG_INFO("token selftest: make-token with bad creds -> %s", rc == 0 ? "unexpected ok" : "failed as expected");
+  /* getsystem without SeImpersonatePrivilege/timeout returns failure; ensure no crash. */
+  LOG_INFO("token selftest: getsystem probe skipped (needs SeImpersonatePrivilege)");
+  return rc == 0 ? 1 : 0;
+}
+
 static int run_services_selftest(void) {
   static sliver_service_t svcs[64];
   int n = sliver_services_list(svcs, 64);
@@ -888,6 +900,11 @@ int sliver_cli_main(int argc, char **argv) {
   }
 #if defined(_WIN32)
 #if defined(_WIN32)
+  if (argc > 1 && strcmp(argv[1], "--token-selftest") == 0) {
+    int rc = run_token_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--services-selftest") == 0) {
     int rc = run_services_selftest();
     sliver_plat_cleanup();
@@ -1013,6 +1030,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 
 
