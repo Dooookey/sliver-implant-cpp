@@ -1,6 +1,8 @@
 /* src/wire/yamux.c - minimal client side of hashicorp/yamux. */
 #include "sliver/yamux.h"
 
+#include "sliver/platform.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -55,14 +57,23 @@ static int io_read_full(sliver_yamux_t *y, void *buf, size_t len) {
 
 static int io_write_full(sliver_yamux_t *y, const void *buf, size_t len) {
   size_t sent = 0;
+  int retries = 0;
+
   while (sent < len) {
     long n = y->write_fn(y->ctx, (const uint8_t *)buf + sent, len - sent);
     if (n == -2) {
-      continue; /* transient WANT_READ: retry the same bytes */
+      /* Transient WANT_READ: retry the same bytes, but bounded - an unbounded
+       * spin here used to hold the send lock forever and froze the session. */
+      if (++retries > 200) {
+        return -1;
+      }
+      sliver_sleep_ms(1);
+      continue;
     }
     if (n <= 0) {
       return -1;
     }
+    retries = 0;
     sent += (size_t)n;
   }
   return 0;
@@ -438,6 +449,8 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     }
   }
 }
+
+
 
 
 

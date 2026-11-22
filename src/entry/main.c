@@ -552,8 +552,10 @@ int sliver_cli_main(int argc, char **argv) {
   }
 
 #if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
-  /* Debug builds keep verbose logs: tunnel relays are otherwise invisible. */
+  /* Debug builds: verbose logs, console + file, overridable through
+   * SLIVER_LOG_LEVEL / SLIVER_LOG_FILE (also for injected payloads). */
   sliver_log_set_level(SLIVER_LOG_DEBUG);
+  sliver_log_init_from_env();
 #endif
 
 #if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG && defined(_WIN32)
@@ -686,5 +688,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 

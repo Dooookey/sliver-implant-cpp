@@ -22,6 +22,9 @@ sliver_log_level_t sliver_log_get_level(void);
 /* Mirrors log output into a file (append). Returns 0 on success.
  * Needed for GUI-subsystem builds where stderr goes nowhere. */
 int sliver_log_set_file(const char *path);
+/* Applies SLIVER_LOG_LEVEL / SLIVER_LOG_FILE (used by debug builds and by
+ * injected payloads that have no console of their own). */
+void sliver_log_init_from_env(void);
 void sliver_log_close_file(void);
 void sliver_log_write(sliver_log_level_t level, const char *fmt, ...);
 
@@ -48,3 +51,4 @@ void sliver_log_write(sliver_log_level_t level, const char *fmt, ...);
 #endif
 
 #endif /* SLIVER_LOG_H */
+

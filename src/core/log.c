@@ -2,6 +2,8 @@
 #include "sliver/log.h"
 
 #include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdio.h>
 
 static sliver_log_level_t g_level = SLIVER_LOG_INFO;
@@ -18,6 +20,28 @@ static const char *level_name(sliver_log_level_t level) {
 }
 
 void sliver_log_set_level(sliver_log_level_t level) { g_level = level; }
+
+/* Runtime configuration so an injected DLL can log to a file/console without a
+ * rebuild: SLIVER_LOG_LEVEL=debug|info|warn|error, SLIVER_LOG_FILE=<path>. */
+void sliver_log_init_from_env(void) {
+  const char *level = getenv("SLIVER_LOG_LEVEL");
+  const char *path = getenv("SLIVER_LOG_FILE");
+
+  if (level != NULL) {
+    if (strcmp(level, "debug") == 0) {
+      g_level = SLIVER_LOG_DEBUG;
+    } else if (strcmp(level, "warn") == 0) {
+      g_level = SLIVER_LOG_WARN;
+    } else if (strcmp(level, "error") == 0) {
+      g_level = SLIVER_LOG_ERROR;
+    } else if (strcmp(level, "info") == 0) {
+      g_level = SLIVER_LOG_INFO;
+    }
+  }
+  if (path != NULL && path[0] != '\0') {
+    (void)sliver_log_set_file(path);
+  }
+}
 sliver_log_level_t sliver_log_get_level(void) { return g_level; }
 
 int sliver_log_set_file(const char *path) {
@@ -60,3 +84,5 @@ void sliver_log_write(sliver_log_level_t level, const char *fmt, ...) {
     (void)fflush(g_file);
   }
 }
+
+
