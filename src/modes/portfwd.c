@@ -102,8 +102,7 @@ static void forward_ready(portfwd_t *f) {
     return;
   }
   sliver_buf_init(&msg);
-  if (sliver_tunnel_data_encode(&msg, NULL, 0, 0, f->sequence, f->id,
-                                f->read_sequence + 1) == 0) {
+  if (sliver_tunnel_data_encode(&msg, NULL, 0, 0, f->sequence, f->id, 0) == 0) {
     (void)g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
   }
   sliver_buf_free(&msg);
@@ -327,6 +326,7 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
 
 
 

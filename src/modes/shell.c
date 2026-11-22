@@ -269,6 +269,9 @@ int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *ou
   if (sliver_tunnel_data_decode(req->data, req->data_len, &td) != 0) {
     return -2;
   }
+  LOG_DEBUG("tunnel: inbound id=%llu len=%u seq=%llu ack=%llu closed=%d",
+            (unsigned long long)td.tunnel_id, (unsigned)td.data_len,
+            (unsigned long long)td.sequence, (unsigned long long)td.ack, td.closed);
   if (sliver_portfwd_tunnel_data(&td)) {
     return -2;
   }
@@ -316,6 +319,7 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return -2; /* piped shells have no window size */
 }
+
 
 
 
