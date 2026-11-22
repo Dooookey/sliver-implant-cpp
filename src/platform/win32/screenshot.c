@@ -1,4 +1,4 @@
-/* src/platform/win32/screenshot.c - screen capture encoded as JPEG via WIC. */
+/* src/platform/win32/screenshot.c - screen capture encoded as PNG via WIC. */
 #include "sliver/screenshot.h"
 
 #include <windows.h>
@@ -109,7 +109,7 @@ int sliver_screenshot_capture(uint8_t **out, size_t *out_len) {
   if (FAILED(CreateStreamOnHGlobal(NULL, TRUE, &stream))) {
     goto cleanup;
   }
-  if (FAILED(factory->lpVtbl->CreateEncoder(factory, &GUID_ContainerFormatJpeg, NULL, &encoder))) {
+  if (FAILED(factory->lpVtbl->CreateEncoder(factory, &GUID_ContainerFormatPng, NULL, &encoder))) {
     goto cleanup;
   }
   if (FAILED(encoder->lpVtbl->Initialize(encoder, stream, WICBitmapEncoderNoCache))) {
@@ -152,3 +152,4 @@ cleanup:
   CoUninitialize();
   return rc;
 }
+

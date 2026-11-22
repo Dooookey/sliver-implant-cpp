@@ -594,8 +594,8 @@ static int run_screenshot_selftest(void) {
     LOG_ERROR("screenshot selftest: capture failed");
     return 1;
   }
-  LOG_INFO("screenshot selftest: %u bytes, jpeg=%s", (unsigned)len,
-           (len > 2 && data[0] == 0xFF && data[1] == 0xD8) ? "yes" : "no");
+  LOG_INFO("screenshot selftest: %u bytes, png=%s", (unsigned)len,
+           (len > 4 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) ? "yes" : "no");
   free(data);
   return 0;
 }
@@ -935,6 +935,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 
 
