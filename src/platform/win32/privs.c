@@ -9,6 +9,41 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Built-in descriptions: LookupPrivilegeDisplayName crashes on this host, so the
+ * well-known privileges are mapped locally (English text, same meaning). */
+static const struct {
+  const char *name;
+  const char *desc;
+} kPrivDesc[] = {
+    {"SeShutdownPrivilege", "Shut down the system"},
+    {"SeChangeNotifyPrivilege", "Bypass traverse checking"},
+    {"SeUndockPrivilege", "Remove computer from docking station"},
+    {"SeIncreaseWorkingSetPrivilege", "Increase a process working set"},
+    {"SeTimeZonePrivilege", "Change the time zone"},
+    {"SeDebugPrivilege", "Debug programs"},
+    {"SeImpersonatePrivilege", "Impersonate a client after authentication"},
+    {"SeAssignPrimaryTokenPrivilege", "Replace a process level token"},
+    {"SeBackupPrivilege", "Back up files and directories"},
+    {"SeRestorePrivilege", "Restore files and directories"},
+    {"SeTakeOwnershipPrivilege", "Take ownership of files or other objects"},
+    {"SeLoadDriverPrivilege", "Load and unload device drivers"},
+    {"SeCreateTokenPrivilege", "Create a token object"},
+    {"SeTcbPrivilege", "Act as part of the operating system"},
+    {"SeSecurityPrivilege", "Manage auditing and security log"},
+    {"SeSystemtimePrivilege", "Change the system time"},
+    {"SeCreateGlobalPrivilege", "Create global objects"},
+};
+
+static const char *priv_description(const char *name) {
+  size_t i;
+  for (i = 0; i < sizeof(kPrivDesc) / sizeof(kPrivDesc[0]); ++i) {
+    if (strcmp(kPrivDesc[i].name, name) == 0) {
+      return kPrivDesc[i].desc;
+    }
+  }
+  return name;
+}
+
 static const char *integrity_name(DWORD rid) {
   if (rid >= SECURITY_MANDATORY_SYSTEM_RID) return "System";
   if (rid >= SECURITY_MANDATORY_HIGH_RID) return "High";
@@ -68,7 +103,7 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
     if (!LookupPrivilegeNameA(NULL, &luid, name, &len)) {
       continue;
     }
-    (void)snprintf(display, sizeof(display), "%s", name);
+    (void)snprintf(display, sizeof(display), "%s", priv_description(name));
     (void)snprintf(out[count].name, sizeof(out[count].name), "%s", name);
     (void)snprintf(out[count].description, sizeof(out[count].description), "%s", display);
     out[count].enabled = (privs->Privileges[i].Attributes & SE_PRIVILEGE_ENABLED) != 0;
@@ -100,6 +135,7 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
   (void)CloseHandle(token);
   return count;
 }
+
 
 
 

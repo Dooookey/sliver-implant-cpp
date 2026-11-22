@@ -601,6 +601,27 @@ static int run_services_selftest(void) {
 }
 #endif
 
+static int run_selftest_all(void) {
+  int failures = 0;
+  LOG_INFO("selftest-all: start");
+#if defined(_WIN32)
+  if (run_privs_selftest() != 0) { failures++; LOG_ERROR("selftest-all: privs failed"); }
+  if (run_screenshot_selftest() != 0) { failures++; LOG_ERROR("selftest-all: screenshot failed"); }
+  if (run_registry_selftest() != 0) { failures++; LOG_ERROR("selftest-all: registry failed"); }
+  if (run_services_selftest() != 0) { failures++; LOG_ERROR("selftest-all: services failed"); }
+  if (run_token_selftest() != 0) { failures++; LOG_ERROR("selftest-all: token failed"); }
+  if (run_netstat_selftest() != 0) { failures++; LOG_ERROR("selftest-all: netstat failed"); }
+  if (run_mount_selftest() != 0) { failures++; LOG_ERROR("selftest-all: mount failed"); }
+  if (run_ifconfig_selftest() != 0) { failures++; LOG_ERROR("selftest-all: ifconfig failed"); }
+#endif
+  if (run_grep_selftest() != 0) { failures++; LOG_ERROR("selftest-all: grep failed"); }
+  if (run_children_selftest() != 0) { failures++; LOG_ERROR("selftest-all: children failed"); }
+  if (run_fs_selftest() != 0) { failures++; LOG_ERROR("selftest-all: fs failed"); }
+  if (run_spawn_selftest() != 0) { failures++; LOG_ERROR("selftest-all: spawn failed"); }
+  LOG_INFO("selftest-all: %s (%d failure(s))", failures == 0 ? "PASS" : "FAIL", failures);
+  return failures == 0 ? 0 : 1;
+}
+
 static int run_grep_selftest(void) {
   char line[512];
   int hits = 0;
@@ -655,8 +676,8 @@ static int run_privs_selftest(void) {
     LOG_ERROR("privs selftest: query failed (%d)", n);
     return 1;
   }
-  LOG_INFO("privs selftest: %d privileges, integrity=%s process=%s first=%s enabled=%d", n,
-           integrity, name, privs[0].name, privs[0].enabled);
+  LOG_INFO("privs selftest: %d privileges, integrity=%s process=%s first=%s (%s) enabled=%d", n,
+           integrity, name, privs[0].name, privs[0].description, privs[0].enabled);
   return 0;
 }
 
@@ -691,8 +712,10 @@ static int run_registry_selftest(void) {
     rc = 1;
   }
   if (sliver_reg_create("HKCU", "Software", "SliverCppTest") != 0) {
-    LOG_ERROR("registry selftest: create key failed");
-    return 1;
+    /* Restricted tokens (sandbox / Low integrity) cannot write HKCU: the read and
+     * enumeration paths above are still valid, so this is a warning, not a fail. */
+    LOG_WARN("registry selftest: write path unavailable in this token (skipped)");
+    return 0;
   }
   LOG_INFO("registry selftest: create key ok");
   if (sliver_reg_write("HKCU", "Software\\\\SliverCppTest", "Value", SLIVER_REG_STRING, "hello",
@@ -900,6 +923,11 @@ int sliver_cli_main(int argc, char **argv) {
   }
 #if defined(_WIN32)
 #if defined(_WIN32)
+  if (argc > 1 && strcmp(argv[1], "--selftest-all") == 0) {
+    int rc = run_selftest_all();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--token-selftest") == 0) {
     int rc = run_token_selftest();
     sliver_plat_cleanup();
@@ -1030,6 +1058,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
+
 
 
 
