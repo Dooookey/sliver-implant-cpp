@@ -186,8 +186,9 @@ int sliver_reader_bytes(sliver_reader_t *r, const uint8_t **data, size_t *len) {
 }
 
 int sliver_reader_string(sliver_reader_t *r, char *out, size_t cap) {
-  const uint8_t *data = NULL;
-  size_t len = 0;
+  const uint8_t *data;
+  size_t len;
+
   if (out == NULL || cap == 0) {
     return -1;
   }
@@ -195,10 +196,16 @@ int sliver_reader_string(sliver_reader_t *r, char *out, size_t cap) {
     return -1;
   }
   if (len >= cap) {
-    len = cap - 1;
+    /* Never truncate silently: a shortened path would delete/write the wrong
+     * file instead of reporting a protocol error. */
+    out[0] = 0;
+    r->failed = 1;
+    return -1;
   }
-  memcpy(out, data, len);
-  out[len] = '\0';
+  if (len != 0) {
+    memcpy(out, data, len);
+  }
+  out[len] = 0;
   return 0;
 }
 
@@ -1047,3 +1054,4 @@ int sliver_tunnel_resend_encode(sliver_buf_t *out, uint64_t sequence, uint64_t t
   }
   return sliver_buf_put_uint64(out, 8, tunnel_id);
 }
+

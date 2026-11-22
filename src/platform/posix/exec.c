@@ -4,6 +4,7 @@
 #include "sliver/proc.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
@@ -12,13 +13,6 @@
 
 #include "sliver/proto.h"
 
-static void drain(int fd, sliver_buf_t *out) {
-  char buf[4096];
-  ssize_t n;
-  while ((n = read(fd, buf, sizeof(buf))) > 0) {
-    (void)sliver_buf_append(out, buf, (size_t)n);
-  }
-}
 
 int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
                      sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
@@ -63,8 +57,44 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   if (capture) {
     (void)close(out_pipe[1]);
     (void)close(err_pipe[1]);
-    drain(out_pipe[0], out);
-    drain(err_pipe[0], err);
+    /* Both pipes at once: draining stdout to EOF first deadlocks as soon as the
+     * child fills its stderr pipe. */
+    {
+      struct pollfd pfds[2];
+      int open_fds = 2;
+      pfds[0].fd = out_pipe[0];
+      pfds[0].events = POLLIN;
+      pfds[1].fd = err_pipe[0];
+      pfds[1].events = POLLIN;
+      while (open_fds > 0) {
+        int rc = poll(pfds, 2, 500);
+        if (rc < 0) {
+          if (errno == EINTR) {
+            continue;
+          }
+          break;
+        }
+        for (int i = 0; i < 2; ++i) {
+          if (pfds[i].fd < 0) {
+            continue;
+          }
+          if (rc == 0) {
+            continue;
+          }
+          if ((pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+            char buf[4096];
+            ssize_t n = read(pfds[i].fd, buf, sizeof(buf));
+            if (n > 0) {
+              (void)sliver_buf_append(i == 0 ? out : err, buf, (size_t)n);
+            } else {
+              (void)close(pfds[i].fd);
+              pfds[i].fd = -1;
+              open_fds--;
+            }
+          }
+        }
+      }
+    }
     (void)close(out_pipe[0]);
     (void)close(err_pipe[0]);
   }
@@ -198,3 +228,4 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+

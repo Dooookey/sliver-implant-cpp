@@ -362,6 +362,7 @@ int sliver_rpc_execute_async(const sliver_envelope_t *req) {
     free(job);
     return -1;
   }
+  sliver_thread_detach(thread); /* fire and forget: the worker frees its job */
   return 0;
 }
 
@@ -442,6 +443,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

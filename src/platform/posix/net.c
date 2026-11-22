@@ -60,11 +60,16 @@ sliver_socket_t *sliver_tcp_connect(const char *host, uint16_t port) {
 
 long sliver_socket_send(sliver_socket_t *s, const void *buf, size_t len) {
   ssize_t n;
-  if (s == NULL || buf == NULL) {
+  if (s == NULL) {
     return -1;
   }
+  /* MSG_NOSIGNAL: a peer reset must not raise SIGPIPE and kill the implant. */
+#ifdef MSG_NOSIGNAL
+  n = send(s->fd, buf, len, MSG_NOSIGNAL);
+#else
   n = send(s->fd, buf, len, 0);
-  return (long)n;
+#endif
+  return n < 0 ? -1 : (long)n;
 }
 
 long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len) {
@@ -121,3 +126,4 @@ void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
   tv.tv_usec = (ms % 1000) * 1000;
   (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
+

@@ -12,6 +12,48 @@
 
 #include "sliver/proto.h"
 
+/* Launches a child while inheriting ONLY the three std handles: with
+ * bInheritHandles=TRUE and no attribute list the child would also inherit the
+ * C2 socket, so a killed implant leaves a live connection behind it. */
+static BOOL spawn_with_std_handles(const char *exe, char *cmdline, HANDLE in, HANDLE out,
+                                   HANDLE err, DWORD flags, PROCESS_INFORMATION *pi) {
+  STARTUPINFOEXA siex;
+  SIZE_T attr_size = 0;
+  LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
+  HANDLE inherit[3];
+  BOOL ok;
+
+  memset(&siex, 0, sizeof(siex));
+  siex.StartupInfo.cb = sizeof(siex);
+  siex.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  siex.StartupInfo.hStdInput = in;
+  siex.StartupInfo.hStdOutput = out;
+  siex.StartupInfo.hStdError = err;
+
+  inherit[0] = in;
+  inherit[1] = out;
+  inherit[2] = err;
+
+  (void)InitializeProcThreadAttributeList(NULL, 1, 0, &attr_size);
+  attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(attr_size == 0 ? 1 : attr_size);
+  if (attrs != NULL &&
+      InitializeProcThreadAttributeList(attrs, 1, 0, &attr_size) &&
+      UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit,
+                                sizeof(inherit), NULL, NULL)) {
+    siex.lpAttributeList = attrs;
+    ok = CreateProcessA(exe, cmdline, NULL, NULL, TRUE,
+                        flags | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL, &siex.StartupInfo, pi);
+  } else {
+    /* Fall back to plain inheritance rather than failing the request. */
+    ok = CreateProcessA(exe, cmdline, NULL, NULL, TRUE, flags, NULL, NULL, &siex.StartupInfo, pi);
+  }
+  if (attrs != NULL) {
+    DeleteProcThreadAttributeList(attrs);
+    free(attrs);
+  }
+  return ok;
+}
+
 static void drain(HANDLE h, sliver_buf_t *out) {
   char buf[4096];
   DWORD got = 0;
@@ -109,7 +151,8 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   {
     char resolved[MAX_PATH * 2];
     resolve_exe(path, resolved, sizeof(resolved));
-    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+    if (!spawn_with_std_handles(resolved, cmdline, si.hStdInput, si.hStdOutput, si.hStdError, 0,
+                               &pi)) {
       if (capture) {
         (void)CloseHandle(out_r);
         (void)CloseHandle(out_w);
@@ -212,8 +255,8 @@ int sliver_child_spawn(const char *path, const char *const *args, size_t argc,
   {
     char resolved[MAX_PATH * 2];
     resolve_exe(path, resolved, sizeof(resolved));
-    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL,
-                        &si, &pi)) {
+    if (!spawn_with_std_handles(resolved, cmdline, si.hStdInput, si.hStdOutput, si.hStdError,
+                               CREATE_NEW_PROCESS_GROUP, &pi)) {
       (void)CloseHandle(in_r);
       (void)CloseHandle(in_w);
       (void)CloseHandle(out_r);
@@ -308,6 +351,7 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+
 
 
 

@@ -355,10 +355,13 @@ int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out) {
     arg->tunnel = t;
     t->thread_running = 1;
     /* The reader thread owns `arg` and the child object until it exits. */
-    if (sliver_thread_create(shell_reader_thread, arg) == NULL) {
+    sliver_thread_t *th = sliver_thread_create(shell_reader_thread, arg);
+    if (th == NULL) {
       t->thread_running = 0;
       free(arg);
       LOG_WARN("shell: cannot start reader thread");
+    } else {
+      sliver_thread_detach(th);
     }
   }
   LOG_DEBUG("shell: %s pid=%u tunnel=%llu", sr.path, pid, (unsigned long long)id);
@@ -421,6 +424,7 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return 0;
 }
+
 
 
 

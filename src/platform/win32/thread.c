@@ -104,3 +104,15 @@ int sliver_thread_join(sliver_thread_t *t) {
   free(t);
   return rc;
 }
+
+/* Detach: the thread keeps running and frees itself when it returns. */
+void sliver_thread_detach(sliver_thread_t *t) {
+  if (t == NULL) {
+    return;
+  }
+  if (t->handle != NULL) {
+    (void)CloseHandle(t->handle);
+    t->handle = NULL;
+  }
+  free(t);
+}

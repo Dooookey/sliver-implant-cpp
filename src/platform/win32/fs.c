@@ -135,6 +135,16 @@ static int remove_tree(const char *path, int force) {
         if (snprintf(child, sizeof(child), "%s\\%s", path, data.cFileName) >= (int)sizeof(child)) {
           continue;
         }
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            /* Junction/symlink: delete the link itself, never recurse into the
+             * target (that would wipe e.g. C:\\Users). */
+            if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+              (void)RemoveDirectoryA(child);
+            } else {
+              (void)DeleteFileA(child);
+            }
+            continue;
+          }
         if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
           (void)remove_tree(child, force);
         } else {
@@ -168,3 +178,4 @@ int sliver_fs_remove(const char *path, int recursive, int force) {
   }
   return remove_tree(path, force);
 }
+

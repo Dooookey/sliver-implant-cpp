@@ -35,6 +35,8 @@ void sliver_mutex_unlock(sliver_mutex_t *m);
 sliver_thread_t *sliver_thread_create(sliver_thread_fn fn, void *arg);
 /* Blocks until the thread finishes; destroys the handle. */
 int sliver_thread_join(sliver_thread_t *t);
+/* Fire-and-forget: the thread keeps running; the handle is released now. */
+void sliver_thread_detach(sliver_thread_t *t);
 
 /* --- TCP sockets (blocking) -------------------------------------------- */
 /* Returns NULL on failure. host may be a name or a literal address. */
@@ -57,4 +59,5 @@ unsigned sliver_current_pid(void);
 #endif
 
 #endif /* SLIVER_PLATFORM_H */
+
 

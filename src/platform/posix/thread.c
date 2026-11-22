@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -24,7 +25,11 @@ struct sliver_thread {
   void *arg;
 };
 
-int sliver_plat_init(void) { return 0; }
+int sliver_plat_init(void) {
+  /* Writing to a closed socket must fail, not terminate the process. */
+  (void)signal(SIGPIPE, SIG_IGN);
+  return 0;
+}
 void sliver_plat_cleanup(void) {}
 
 uint64_t sliver_now_ms(void) {
@@ -110,4 +115,17 @@ int sliver_thread_join(sliver_thread_t *t) {
   }
   free(t);
   return rc;
+}
+
+
+/* Detach: the thread keeps running and frees itself when it returns. */
+void sliver_thread_detach(sliver_thread_t *t) {
+  if (t == NULL) {
+    return;
+  }
+  if (t->started) {
+    (void)pthread_detach(t->handle);
+    t->started = 0;
+  }
+  free(t);
 }
