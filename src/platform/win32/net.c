@@ -121,6 +121,12 @@ void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
   }
   tv = (DWORD)ms;
   (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+  /* Bound sends too: an unresponsive peer must not freeze whichever thread is
+   * writing (the session loop used to block here indefinitely). */
+  {
+    DWORD snd = 5000;
+    (void)setsockopt(s->fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&snd, sizeof(snd));
+  }
 }
 
 
@@ -243,5 +249,7 @@ int sliver_net_sockets(sliver_sock_t *out, int max) {
   free(table);
   return count;
 }
+
+
 
 

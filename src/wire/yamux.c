@@ -393,14 +393,20 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
   if (s == NULL) {
     return -1;
   }
+  int zero_window_spins = 0;
   while (sent < len) {
     size_t chunk;
     if (s->send_window == 0) {
-      if (sliver_yamux_pump(y) != 0) {
+      /* Never pump from the writer: pump reads frames and only the session
+       * thread may do that (two readers corrupted the stream). Wait briefly and
+       * give up instead of deadlocking the caller. */
+      if (++zero_window_spins > 5000) {
         return -1;
       }
+      sliver_sleep_ms(1);
       continue;
     }
+    zero_window_spins = 0;
     chunk = len - sent;
     if (chunk > SLIVER_YAMUX_MAX_FRAME) {
       chunk = SLIVER_YAMUX_MAX_FRAME;
@@ -501,6 +507,8 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     }
   }
 }
+
+
 
 
 
