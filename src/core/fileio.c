@@ -1,4 +1,5 @@
 /* src/core/fileio.c - portable file read/write used by download/upload. */
+#include <errno.h>
 #include <stdio.h>
 
 #if defined(_WIN32)
@@ -76,6 +77,8 @@ int sliver_fs_write_chunk(const char *path, const void *data, size_t len, int ov
   }
   return 0;
 }
+static int g_fs_last_error = 0;
+
 int64_t sliver_fs_size(const char *path) {
   FILE *f;
   if (path == NULL) {
@@ -109,15 +112,18 @@ int sliver_fs_copy(const char *src, const char *dst, int64_t *written) {
   }
   in = fopen(src, "rb");
   if (in == NULL) {
+    g_fs_last_error = errno;
     return -1;
   }
   out = fopen(dst, "wb");
   if (out == NULL) {
+    g_fs_last_error = errno;
     (void)fclose(in);
     return -1;
   }
   while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
     if (fwrite(buf, 1, n, out) != n) {
+      g_fs_last_error = errno;
       (void)fclose(in);
       (void)fclose(out);
       return -1;
@@ -126,6 +132,7 @@ int sliver_fs_copy(const char *src, const char *dst, int64_t *written) {
   }
   (void)fclose(in);
   if (fclose(out) != 0) {
+    g_fs_last_error = errno;
     return -1;
   }
   if (written != NULL) {
@@ -133,3 +140,6 @@ int sliver_fs_copy(const char *src, const char *dst, int64_t *written) {
   }
   return 0;
 }
+
+int sliver_fs_last_error(void) { return g_fs_last_error; }
+

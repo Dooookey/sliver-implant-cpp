@@ -548,6 +548,17 @@ static int run_spawn_selftest(void) {
   return 0;
 }
 
+static int run_cp_selftest(const char *src, const char *dst) {
+  int64_t written = 0;
+  if (sliver_fs_copy(src, dst, &written) != 0) {
+    LOG_ERROR("cp selftest: %s -> %s failed: %s", src, dst, strerror(sliver_fs_last_error()));
+    return 1;
+  }
+  LOG_INFO("cp selftest: %s -> %s ok (%lld bytes)", src, dst, (long long)written);
+  (void)sliver_fs_remove(dst, 0, 1);
+  return 0;
+}
+
 static int run_fs_selftest(void) {
   const char *a = "build\\fs-selftest-a.txt";
   const char *b = "build\\fs-selftest-b.txt";
@@ -669,6 +680,11 @@ int sliver_cli_main(int argc, char **argv) {
     return 2;
   }
 
+  if (argc > 3 && strcmp(argv[1], "--cp-selftest") == 0) {
+    int rc = run_cp_selftest(argv[2], argv[3]);
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--fs-selftest") == 0) {
     int rc = run_fs_selftest();
     sliver_plat_cleanup();
@@ -756,6 +772,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 
 

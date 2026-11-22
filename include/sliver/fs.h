@@ -46,6 +46,8 @@ int64_t sliver_fs_size(const char *path);
 
 /* --- P1.2 file operations ---------------------------------------------- */
 int sliver_fs_copy(const char *src, const char *dst, int64_t *written);
+/* errno of the last sliver_fs_copy failure. */
+int sliver_fs_last_error(void);
 int sliver_fs_move(const char *src, const char *dst);
 int sliver_fs_chmod(const char *path, const char *mode, int recursive);
 int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime);
@@ -57,5 +59,6 @@ int sliver_fs_abspath(const char *path, char *buf, size_t cap);
 #endif
 
 #endif /* SLIVER_FS_H */
+
 
 

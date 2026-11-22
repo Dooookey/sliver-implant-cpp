@@ -159,7 +159,7 @@ target_compile_definitions(sliver_core PRIVATE _CRT_SECURE_NO_WARNINGS
 if(IMPLANT_FORMAT STREQUAL "exe")
   add_executable(implant src/entry/main.c)
   if(IMPLANT_CRYPTO)
-    target_compile_definitions(implant PRIVATE IMPLANT_CRYPTO_ENABLED=1)
+    target_compile_definitions(implant PRIVATE IMPLANT_CRYPTO_ENABLED=1 _CRT_SECURE_NO_WARNINGS)
   endif()
   target_link_libraries(implant PRIVATE sliver_core)
   sliver_apply_warnings(implant)
@@ -187,6 +187,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 
