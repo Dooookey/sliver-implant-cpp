@@ -87,8 +87,14 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
     (void)snprintf(process_name, process_name_cap, "%s", base);
   }
   LOG_DEBUG("privs: open token");
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
-    return -1;
+  /* While impersonating, the effective identity is the THREAD token; the process
+   * token is not even openable by the impersonated user (that made getprivs fail
+   * right after make-token). */
+  if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token)) {
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+      LOG_DEBUG("privs: no thread/process token (%lu)", (unsigned long)GetLastError());
+      return -1;
+    }
   }
   LOG_DEBUG("privs: token ok");
   LOG_DEBUG("privs: query size");
@@ -148,6 +154,7 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
   (void)CloseHandle(token);
   return count;
 }
+
 
 
 
