@@ -461,6 +461,42 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	exReq := append(protoStr(1, cmdExe), protoStr(2, "/c")...)
 	exReq = append(exReq, protoStr(2, "echo hi")...)
 	exReq = append(exReq, 0x18, 0x01) // Output = true
+	// Long running execute must not block the session: send it, then verify Ls
+	// still answers, then collect the Execute response.
+	slowReq := append(protoStr(1, cmdExe), protoStr(2, "/c")...)
+	slowReq = append(slowReq, protoStr(2, "powershell -c \"Start-Sleep 3; Write-Output slow-done\"")...)
+	slowReq = append(slowReq, 0x18, 0x01)
+	slowEnv := makeEnvelope(60, 44, slowReq)
+	if st, err := sess.OpenStream(); err == nil {
+		_ = writeFrame(st, rawSignature(serverPriv, serverPub, slowEnv), slowEnv)
+	}
+	// Concurrent Pwd while the slow execute runs: both answers must arrive.
+	if st2, err := sess.OpenStream(); err == nil {
+		pwdEnv := makeEnvelope(61, 12, []byte{0x4a, 0x00})
+		_ = writeFrame(st2, rawSignature(serverPriv, serverPub, pwdEnv), pwdEnv)
+	}
+	for i := 0; i < 40; i++ {
+		rs, err := sess.AcceptStream()
+		if err != nil {
+			break
+		}
+		sig, envOut, err := readFrame(rs)
+		if err != nil {
+			break
+		}
+		if !ed25519.Verify(clientPub, envOut, sig[10:]) {
+			rs.Close()
+			continue
+		}
+		v, b := envelopeFields(envOut)
+		if v[2] == 44 && v[1] == 60 {
+			_, sb := envelopeFields(b[3])
+			fmt.Printf("ASYNC EXECUTE ok: id=%d stdout=%q\n", v[1], string(sb[2]))
+			rs.Close()
+			break
+		}
+		rs.Close()
+	}
 	if _, exBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 51, 44, exReq, 44); err != nil {
 		log.Printf("execute failed: %v", err)
 	} else {
@@ -845,6 +881,8 @@ func startEchoServer() (string, func()) {
 	}()
 	return ln.Addr().String(), func() { _ = ln.Close() }
 }
+
+
 
 
 

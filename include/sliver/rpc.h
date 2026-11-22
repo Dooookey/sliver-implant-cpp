@@ -59,6 +59,14 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id);
 void sliver_portfwd_set_sender(sliver_shell_send_fn fn);
 void sliver_portfwd_shutdown(void);
 
+/* Long running handlers (execute) answer out-of-band so the read loop keeps
+ * servicing yamux keepalives; the response reuses the request envelope id. */
+typedef int (*sliver_rpc_send_fn)(int64_t envelope_id, uint32_t type, const void *data,
+                                  size_t len);
+void sliver_rpc_set_sender(sliver_rpc_send_fn fn);
+/* Returns 0 when the work was handed to a worker thread (no immediate reply). */
+int sliver_rpc_execute_async(const sliver_envelope_t *req);
+
 #ifdef __cplusplus
 }
 #endif

