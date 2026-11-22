@@ -478,6 +478,15 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	echoPort, _ := strconv.Atoi(echoPortStr)
 	defer stopEcho()
 	pfTunnel := uint64(0xAABBCCEE)
+	// Real clients bind a freshly created tunnel with a zero-byte TunnelData
+	// before sending PortfwdReq; the implant must acknowledge it.
+	bindTd := appendUvarint(nil, 8<<3)
+	bindTd = appendUvarint(bindTd, pfTunnel)
+	if v, _, err := rawExchange(sess, serverPriv, serverPub, clientPub, makeEnvelope(54, 22, bindTd)); err == nil {
+		fmt.Printf("TUNNEL BIND ok: ack=%d tunnel=%d\n", v[4], v[8])
+	} else {
+		log.Printf("tunnel bind failed: %v", err)
+	}
 	pfReq := append(protoStr(3, "127.0.0.1"), appendUvarint(nil, 1<<3)...)
 	pfReq = appendUvarint(pfReq, uint64(echoPort))
 	pfReq = append(pfReq, appendUvarint(nil, 8<<3)...)
@@ -836,5 +845,6 @@ func startEchoServer() (string, func()) {
 	}()
 	return ln.Addr().String(), func() { _ = ln.Close() }
 }
+
 
 

