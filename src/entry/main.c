@@ -568,6 +568,18 @@ static int run_ifconfig_selftest(void) {
   return 0;
 }
 
+static int run_children_selftest(void) {
+  sliver_child_proc_t kids[64];
+  int n = sliver_proc_children(kids, 64);
+  if (n < 0) {
+    LOG_ERROR("children selftest: enumeration failed");
+    return 1;
+  }
+  LOG_INFO("children selftest: %d child process(es)%s%s", n, n > 0 ? ", first=" : "",
+           n > 0 ? kids[0].path : "");
+  return 0;
+}
+
 #if defined(_WIN32)
 static int run_privs_selftest(void) {
   sliver_priv_t privs[64];
@@ -826,6 +838,11 @@ int sliver_cli_main(int argc, char **argv) {
     return rc;
   }
 #if defined(_WIN32)
+  if (argc > 1 && strcmp(argv[1], "--children-selftest") == 0) {
+    int rc = run_children_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--privs-selftest") == 0) {
     int rc = run_privs_selftest();
     sliver_plat_cleanup();
@@ -935,6 +952,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 
 

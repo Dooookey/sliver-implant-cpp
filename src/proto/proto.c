@@ -1468,3 +1468,31 @@ int sliver_getprivs_encode(sliver_buf_t *out, const sliver_priv_t *privs, int co
 }
 
 
+
+/* --- ExecuteChildren{Children=1 repeated ExecuteChild} ------------------- */
+int sliver_execute_children_encode(sliver_buf_t *out, const sliver_child_proc_t *children,
+                                   int count, const char *err) {
+  int i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    sliver_buf_t msg;
+
+    sliver_buf_init(&msg);
+    if (sliver_buf_put_int32(&msg, 1, children[i].pid) != 0 ||
+        sliver_buf_put_string(&msg, 2, children[i].path) != 0) {
+      sliver_buf_free(&msg);
+      return -1;
+    }
+    if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, msg.len) != 0 ||
+        sliver_buf_append(out, msg.data, msg.len) != 0) {
+      sliver_buf_free(&msg);
+      return -1;
+    }
+    sliver_buf_free(&msg);
+  }
+  return encode_response(out, err);
+}
+

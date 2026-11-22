@@ -152,3 +152,45 @@ void sliver_env_free(sliver_env_t *vars) { free(vars); }
 
 
 
+
+/* Children of this process: scan /proc/<pid>/stat for PPid. */
+int sliver_proc_children(sliver_child_proc_t *out, int max) {
+  DIR *d;
+  struct dirent *e;
+  int self = (int)getpid();
+  int count = 0;
+
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  d = opendir("/proc");
+  if (d == NULL) {
+    return -1;
+  }
+  while ((e = readdir(d)) != NULL && count < max) {
+    char path[64];
+    FILE *f;
+    int pid;
+    int ppid;
+    char comm[128];
+    if (e->d_name[0] < '0' || e->d_name[0] > '9') {
+      continue;
+    }
+    pid = atoi(e->d_name);
+    (void)snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+    f = fopen(path, "r");
+    if (f == NULL) {
+      continue;
+    }
+    if (fscanf(f, "%d %127s %*c %d", &pid, comm, &ppid) == 3 && ppid == self) {
+      memset(&out[count], 0, sizeof(out[count]));
+      out[count].pid = pid;
+      out[count].ppid = ppid;
+      (void)snprintf(out[count].path, sizeof(out[count].path), "%s", comm);
+      count++;
+    }
+    (void)fclose(f);
+  }
+  (void)closedir(d);
+  return count;
+}

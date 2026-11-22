@@ -779,6 +779,19 @@ static int handle_getprivs(const sliver_envelope_t *req, sliver_buf_t *out) {
 }
 #endif
 
+
+/* --- execute-children --------------------------------------------------- */
+static int handle_execute_children(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_child_proc_t children[64];
+  int n;
+
+  (void)req;
+  n = sliver_proc_children(children, 64);
+  LOG_DEBUG("rpc: execute-children -> %d", n);
+  return sliver_execute_children_encode(out, children, n > 0 ? n : 0,
+                                        n < 0 ? "execute-children: enumeration failed" : NULL);
+}
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -803,6 +816,7 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_IFCONFIG_REQ, SLIVER_MSG_IFCONFIG, handle_ifconfig},
     {SLIVER_MSG_NETSTAT_REQ, SLIVER_MSG_NETSTAT, handle_netstat},
     {SLIVER_MSG_MOUNT_REQ, SLIVER_MSG_MOUNT, handle_mount},
+    {136, 136, handle_execute_children},
 #if defined(_WIN32)
     {71, 71, handle_reg_read},
     {72, 72, handle_reg_write},
@@ -870,6 +884,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

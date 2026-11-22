@@ -156,3 +156,35 @@ int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_ca
   return 0;
 }
 
+
+/* Children of this process (execute-children). */
+int sliver_proc_children(sliver_child_proc_t *out, int max) {
+  HANDLE snap;
+  PROCESSENTRY32 pe;
+  DWORD self = GetCurrentProcessId();
+  int count = 0;
+
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) {
+    return -1;
+  }
+  pe.dwSize = sizeof(pe);
+  if (!Process32First(snap, &pe)) {
+    (void)CloseHandle(snap);
+    return 0;
+  }
+  do {
+    if (pe.th32ParentProcessID == self && count < max) {
+      memset(&out[count], 0, sizeof(out[count]));
+      out[count].pid = (int32_t)pe.th32ProcessID;
+      out[count].ppid = (int32_t)pe.th32ParentProcessID;
+      (void)snprintf(out[count].path, sizeof(out[count].path), "%s", pe.szExeFile);
+      count++;
+    }
+  } while (Process32Next(snap, &pe));
+  (void)CloseHandle(snap);
+  return count;
+}
