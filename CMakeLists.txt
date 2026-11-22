@@ -127,6 +127,7 @@ set(SLIVER_CORE_SOURCES
   src/platform/${SLIVER_PLATFORM_DIR}/privs.c
   src/platform/${SLIVER_PLATFORM_DIR}/services.c
   src/platform/${SLIVER_PLATFORM_DIR}/token.c
+  src/platform/${SLIVER_PLATFORM_DIR}/dllload.c
 )
 if(IMPLANT_CRYPTO)
   list(APPEND SLIVER_CORE_SOURCES
@@ -192,6 +193,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 

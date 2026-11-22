@@ -20,6 +20,7 @@
 #include "sliver/log.h"
 #include "sliver/platform.h"
 #include "sliver/fs.h"
+#include "sliver/dllload.h"
 #include "sliver/privs.h"
 #include "sliver/registry.h"
 #include "sliver/screenshot.h"
@@ -571,6 +572,18 @@ static int run_ifconfig_selftest(void) {
 }
 
 #if defined(_WIN32)
+static int run_dll_selftest(void) {
+  /* kernel32 is guaranteed present: proves the LoadLibrary path without shipping a
+   * test DLL. Remote injection is verified separately. */
+  int rc = sliver_dll_load("kernel32.dll", NULL);
+  if (rc < 0) {
+    LOG_ERROR("dll selftest: LoadLibrary failed (%d)", rc);
+    return 1;
+  }
+  LOG_INFO("dll selftest: LoadLibrary(kernel32) ok");
+  return 0;
+}
+
 static int run_token_selftest(void) {
   int rc;
 
@@ -928,6 +941,11 @@ int sliver_cli_main(int argc, char **argv) {
     sliver_plat_cleanup();
     return rc;
   }
+  if (argc > 1 && strcmp(argv[1], "--dll-selftest") == 0) {
+    int rc = run_dll_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--token-selftest") == 0) {
     int rc = run_token_selftest();
     sliver_plat_cleanup();
@@ -1058,6 +1076,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 
 
