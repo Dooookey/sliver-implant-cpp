@@ -2,6 +2,7 @@
 #include "sliver/fs.h"
 #include "sliver/privs.h"
 #include "sliver/registry.h"
+#include "sliver/services.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 
@@ -1591,3 +1592,106 @@ int sliver_grep_encode(sliver_buf_t *out, const char *abs_path, const char *file
   return encode_response(out, err);
 }
 
+
+/* --- services ----------------------------------------------------------- */
+static int encode_service(sliver_buf_t *entry, const sliver_service_t *svc) {
+  if (sliver_buf_put_string(entry, 1, svc->name) != 0 ||
+      sliver_buf_put_string(entry, 2, svc->display_name) != 0 ||
+      sliver_buf_put_string(entry, 3, svc->description) != 0 ||
+      sliver_buf_put_uint32(entry, 4, svc->status) != 0 ||
+      sliver_buf_put_uint32(entry, 5, svc->startup_type) != 0 ||
+      sliver_buf_put_string(entry, 6, svc->bin_path) != 0 ||
+      sliver_buf_put_string(entry, 7, svc->account) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+/* Services{Details=1 repeated ServiceDetails, Error=2, Response=9}. */
+int sliver_services_encode(sliver_buf_t *out, const sliver_service_t *svcs, int count,
+                           const char *err) {
+  int i;
+
+  for (i = 0; i < count; ++i) {
+    sliver_buf_t entry;
+    sliver_buf_init(&entry);
+    if (encode_service(&entry, &svcs[i]) != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, entry.len) != 0 ||
+        sliver_buf_append(out, entry.data, entry.len) != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    sliver_buf_free(&entry);
+  }
+  if (err != NULL && err[0] != 0 && sliver_buf_put_string(out, 2, err) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+/* ServiceDetail{Detail=1 ServiceDetails, Message=2, Response=9}. */
+int sliver_service_detail_encode(sliver_buf_t *out, const sliver_service_t *svc, const char *msg,
+                                 const char *err) {
+  if (svc != NULL) {
+    sliver_buf_t entry;
+    sliver_buf_init(&entry);
+    if (encode_service(&entry, svc) != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, entry.len) != 0 ||
+        sliver_buf_append(out, entry.data, entry.len) != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    sliver_buf_free(&entry);
+  }
+  if (msg != NULL && msg[0] != 0 && sliver_buf_put_string(out, 2, msg) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+
+
+/* ServiceInfoReq{ServiceName=1, Hostname=2} inside ServiceDetailReq/StartByName. */
+int sliver_service_name_decode(const void *data, size_t len, char *name, size_t cap) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (name == NULL || cap == 0) {
+    return -1;
+  }
+  name[0] = 0;
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (wire == 2 && field == 1) {
+      /* ServiceInfoReq: parse the nested message for ServiceName=1. */
+      const uint8_t *msg;
+      size_t msg_len;
+      sliver_reader_t nested;
+      uint32_t nf, nw;
+      int nrc;
+      if (sliver_reader_bytes(&r, &msg, &msg_len) != 0) {
+        return -1;
+      }
+      sliver_reader_init(&nested, msg, msg_len);
+      while ((nrc = sliver_reader_next(&nested, &nf, &nw)) == 0) {
+        if (nw == 2 && nf == 1) {
+          if (sliver_reader_string(&nested, name, cap) != 0) {
+            return -1;
+          }
+        } else if (sliver_reader_skip(&nested, nw) != 0) {
+          return -1;
+        }
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}

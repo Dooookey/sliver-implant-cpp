@@ -23,6 +23,7 @@
 #include "sliver/privs.h"
 #include "sliver/registry.h"
 #include "sliver/screenshot.h"
+#include "sliver/services.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 #include "sliver/session.h"
@@ -568,6 +569,18 @@ static int run_ifconfig_selftest(void) {
   return 0;
 }
 
+#if defined(_WIN32)
+static int run_services_selftest(void) {
+
+  if (sliver_revert_to_self() != 0) {
+    LOG_WARN("services selftest: RevertToSelf failed");
+  } else {
+    LOG_INFO("services selftest: rev2self ok");
+  }
+  return 0;
+}
+#endif
+
 static int run_grep_selftest(void) {
   char line[512];
   int hits = 0;
@@ -866,6 +879,13 @@ int sliver_cli_main(int argc, char **argv) {
     return rc;
   }
 #if defined(_WIN32)
+#if defined(_WIN32)
+  if (argc > 1 && strcmp(argv[1], "--services-selftest") == 0) {
+    int rc = run_services_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
+#endif
   if (argc > 1 && strcmp(argv[1], "--grep-selftest") == 0) {
     int rc = run_grep_selftest();
     sliver_plat_cleanup();
@@ -985,6 +1005,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
 
 
 
