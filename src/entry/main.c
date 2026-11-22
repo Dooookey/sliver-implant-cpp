@@ -20,7 +20,9 @@
 #include "sliver/log.h"
 #include "sliver/platform.h"
 #include "sliver/fs.h"
+#include "sliver/privs.h"
 #include "sliver/registry.h"
+#include "sliver/screenshot.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 #include "sliver/session.h"
@@ -567,6 +569,37 @@ static int run_ifconfig_selftest(void) {
 }
 
 #if defined(_WIN32)
+static int run_privs_selftest(void) {
+  sliver_priv_t privs[64];
+  char integrity[32];
+  char name[256];
+  int n;
+
+  integrity[0] = 0;
+  name[0] = 0;
+  n = sliver_getprivs(privs, 64, integrity, sizeof(integrity), name, sizeof(name));
+  if (n <= 0) {
+    LOG_ERROR("privs selftest: query failed (%d)", n);
+    return 1;
+  }
+  LOG_INFO("privs selftest: %d privileges, integrity=%s process=%s first=%s enabled=%d", n,
+           integrity, name, privs[0].name, privs[0].enabled);
+  return 0;
+}
+
+static int run_screenshot_selftest(void) {
+  uint8_t *data = NULL;
+  size_t len = 0;
+  if (sliver_screenshot_capture(&data, &len) != 0 || data == NULL) {
+    LOG_ERROR("screenshot selftest: capture failed");
+    return 1;
+  }
+  LOG_INFO("screenshot selftest: %u bytes, jpeg=%s", (unsigned)len,
+           (len > 2 && data[0] == 0xFF && data[1] == 0xD8) ? "yes" : "no");
+  free(data);
+  return 0;
+}
+
 static int run_registry_selftest(void) {
   char value[1024];
   uint8_t binary[512];
@@ -793,6 +826,16 @@ int sliver_cli_main(int argc, char **argv) {
     return rc;
   }
 #if defined(_WIN32)
+  if (argc > 1 && strcmp(argv[1], "--privs-selftest") == 0) {
+    int rc = run_privs_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
+  if (argc > 1 && strcmp(argv[1], "--screenshot-selftest") == 0) {
+    int rc = run_screenshot_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--registry-selftest") == 0) {
     int rc = run_registry_selftest();
     sliver_plat_cleanup();
@@ -892,6 +935,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
+
+
 
 
 

