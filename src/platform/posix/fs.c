@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <utime.h>
 #include <unistd.h>
 
 static void mode_string(mode_t mode, char *out, size_t cap) {
@@ -187,3 +188,44 @@ int sliver_fs_is_dir(const char *path) {
   }
   return (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
 }
+
+int sliver_fs_move(const char *src, const char *dst) {
+  if (src == NULL || dst == NULL) {
+    return -1;
+  }
+  if (rename(src, dst) == 0) {
+    return 0;
+  }
+  {
+    int64_t written = 0;
+    if (sliver_fs_copy(src, dst, &written) != 0) {
+      return -1;
+    }
+    return sliver_fs_remove(src, 0, 1);
+  }
+}
+
+int sliver_fs_chmod(const char *path, const char *mode, int recursive) {
+  long parsed;
+  char *end = NULL;
+  (void)recursive;
+  if (path == NULL || mode == NULL) {
+    return -1;
+  }
+  parsed = strtol(mode, &end, 8);
+  if (end == mode) {
+    return -1;
+  }
+  return chmod(path, (mode_t)parsed) == 0 ? 0 : -1;
+}
+
+int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
+  struct utimbuf times;
+  if (path == NULL) {
+    return -1;
+  }
+  times.actime = (time_t)atime;
+  times.modtime = (time_t)mtime;
+  return utime(path, &times) == 0 ? 0 : -1;
+}
+

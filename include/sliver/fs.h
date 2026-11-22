@@ -43,6 +43,12 @@ int sliver_fs_read_chunk(const char *path, int64_t start, int64_t max, sliver_bu
 /* Appends data to path; `overwrite` truncates the file first. */
 int sliver_fs_write_chunk(const char *path, const void *data, size_t len, int overwrite);
 int64_t sliver_fs_size(const char *path);
+
+/* --- P1.2 file operations ---------------------------------------------- */
+int sliver_fs_copy(const char *src, const char *dst, int64_t *written);
+int sliver_fs_move(const char *src, const char *dst);
+int sliver_fs_chmod(const char *path, const char *mode, int recursive);
+int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime);
 /* Expands a possibly relative path to absolute form (best effort). */
 int sliver_fs_abspath(const char *path, char *buf, size_t cap);
 
@@ -51,4 +57,5 @@ int sliver_fs_abspath(const char *path, char *buf, size_t cap);
 #endif
 
 #endif /* SLIVER_FS_H */
+
 

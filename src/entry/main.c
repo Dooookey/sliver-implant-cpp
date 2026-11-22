@@ -19,6 +19,7 @@
 #include "sliver/frame.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
+#include "sliver/fs.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 #include "sliver/session.h"
@@ -547,6 +548,42 @@ static int run_spawn_selftest(void) {
   return 0;
 }
 
+static int run_fs_selftest(void) {
+  const char *a = "build\\fs-selftest-a.txt";
+  const char *b = "build\\fs-selftest-b.txt";
+  const char *c = "build\\fs-selftest-c.txt";
+  int64_t written = 0;
+  int rc = 0;
+
+  (void)sliver_fs_write_chunk(a, "fs-selftest\n", 12, 1);
+  if (sliver_fs_copy(a, b, &written) != 0) {
+    LOG_ERROR("fs selftest: copy failed");
+    rc = 1;
+  } else {
+    LOG_INFO("fs selftest: copy ok (%lld bytes)", (long long)written);
+  }
+  if (sliver_fs_move(b, c) != 0) {
+    LOG_ERROR("fs selftest: move failed");
+    rc = 1;
+  } else {
+    LOG_INFO("fs selftest: move ok");
+  }
+  if (sliver_fs_chmod(c, "0644", 0) != 0) {
+    LOG_WARN("fs selftest: chmod unsupported here");
+  } else {
+    LOG_INFO("fs selftest: chmod ok");
+  }
+  if (sliver_fs_settimes(c, 1700000000, 1700000000) != 0) {
+    LOG_WARN("fs selftest: chtimes failed");
+    rc = 1;
+  } else {
+    LOG_INFO("fs selftest: chtimes ok");
+  }
+  (void)sliver_fs_remove(a, 0, 1);
+  (void)sliver_fs_remove(c, 0, 1);
+  return rc;
+}
+
 static void print_diagnostics(void) {
   LOG_INFO("implant   : %s (build %s)\n", sliver_config_name(),
                sliver_config_build_id());
@@ -632,6 +669,11 @@ int sliver_cli_main(int argc, char **argv) {
     return 2;
   }
 
+  if (argc > 1 && strcmp(argv[1], "--fs-selftest") == 0) {
+    int rc = run_fs_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--spawn-selftest") == 0) {
     int rc = run_spawn_selftest();
     sliver_plat_cleanup();
@@ -714,6 +756,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
 
 
 
