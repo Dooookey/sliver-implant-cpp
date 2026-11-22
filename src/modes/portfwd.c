@@ -118,10 +118,13 @@ static void forward_thread(void *arg) {
       }
       break;
     }
+    LOG_DEBUG("portfwd: socket->tunnel %ld bytes", n);
     if (forward_send_data(f, buf, (size_t)n, 0) != 0) {
+      LOG_WARN("portfwd: tunnel send failed, closing");
       break;
     }
   }
+  LOG_INFO("portfwd: closing tunnel=%llu (socket EOF)", (unsigned long long)f->id);
   (void)forward_send_data(f, NULL, 0, 1);
 }
 
@@ -239,7 +242,8 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   f->id = id;
   f->sock = sock;
   f->lock = sliver_mutex_create();
-  LOG_DEBUG("portfwd: %s:%u tunnel=%llu", host, (unsigned)port, (unsigned long long)id);
+  LOG_INFO("portfwd: connected %s:%u tunnel=%llu", host, (unsigned)port,
+           (unsigned long long)id);
   if (sliver_thread_create(forward_thread, f) == NULL) {
     forward_release(f);
     return -1;
@@ -265,12 +269,14 @@ int sliver_portfwd_tunnel_data(const sliver_tunnel_data_t *td) {
   if (f->sock == NULL) {
     /* The forward was never established (dial failed): tell the peer to close
      * instead of letting its connection hang. */
+    LOG_WARN("portfwd: tunnel=%llu has no socket, closing", (unsigned long long)f->id);
     (void)forward_send_data(f, NULL, 0, 1);
     forward_release(f);
     return 1;
   }
   if (td->sequence == f->read_sequence) {
     if (td->data_len != 0) {
+      LOG_DEBUG("portfwd: tunnel->socket %u bytes", (unsigned)td->data_len);
       (void)sliver_socket_send(f->sock, td->data, td->data_len);
     }
     if (td->closed) {
@@ -291,6 +297,8 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
+
 
 
 
