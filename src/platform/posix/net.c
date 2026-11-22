@@ -188,3 +188,74 @@ int sliver_net_list(sliver_iface_t *out, int max) {
 }
 
 
+
+/* --- sockets (netstat) --------------------------------------------------- */
+static int hex_addr_to_ip(const char *hex, int v6, char *out, size_t cap) {
+  unsigned int b[16];
+  int i;
+  if (!v6) {
+    unsigned int v = (unsigned int)strtoul(hex, NULL, 16);
+    return snprintf(out, cap, "%u.%u.%u.%u", v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff,
+                    (v >> 24) & 0xff) > 0
+               ? 0
+               : -1;
+  }
+  for (i = 0; i < 4; ++i) {
+    char chunk[9];
+    memcpy(chunk, hex + i * 8, 8);
+    chunk[8] = 0;
+    b[i] = (unsigned int)strtoul(chunk, NULL, 16);
+  }
+  return snprintf(out, cap, "%04x:%04x:%04x:%04x", (b[0] >> 16) & 0xffff, b[0] & 0xffff,
+                  (b[1] >> 16) & 0xffff, b[1] & 0xffff) > 0
+             ? 0
+             : -1;
+}
+
+static int read_net_file(const char *path, const char *proto, sliver_sock_t *out, int max,
+                         int count) {
+  FILE *f = fopen(path, "r");
+  char line[512];
+
+  if (f == NULL) {
+    return count;
+  }
+  (void)fgets(line, sizeof(line), f); /* header */
+  while (count < max && fgets(line, sizeof(line), f) != NULL) {
+    char local[64];
+    char remote[64];
+    char state[16];
+    unsigned int lport = 0;
+    unsigned int rport = 0;
+    unsigned long uid = 0;
+    sliver_sock_t *e;
+
+    if (sscanf(line, "%*d: %63[0-9A-Fa-f]:%X %63[0-9A-Fa-f]:%X %15s %*x:%*x %*x:%*x %*x %lu",
+               local, &lport, remote, &rport, state, &uid) < 6) {
+      continue;
+    }
+    e = &out[count];
+    memset(e, 0, sizeof(*e));
+    (void)hex_addr_to_ip(local, 0, e->local_ip, sizeof(e->local_ip));
+    (void)hex_addr_to_ip(remote, 0, e->remote_ip, sizeof(e->remote_ip));
+    e->local_port = lport;
+    e->remote_port = rport;
+    (void)snprintf(e->state, sizeof(e->state), "%s", state);
+    e->uid = (uint32_t)uid;
+    e->pid = -1;
+    (void)snprintf(e->proto, sizeof(e->proto), "%s", proto);
+    count++;
+  }
+  (void)fclose(f);
+  return count;
+}
+
+int sliver_net_sockets(sliver_sock_t *out, int max) {
+  int count;
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  count = read_net_file("/proc/net/tcp", "tcp", out, max, 0);
+  count = read_net_file("/proc/net/tcp6", "tcp6", out, max, count);
+  return count;
+}

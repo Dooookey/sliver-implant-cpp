@@ -12,6 +12,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
+#include <tcpmib.h>
 
 struct sliver_socket {
   SOCKET fd;
@@ -179,5 +180,68 @@ int sliver_net_list(sliver_iface_t *out, int max) {
   return count;
 }
 
+
+
+
+/* --- sockets (netstat) --------------------------------------------------- */
+static const char *tcp_state_name(DWORD state) {
+  switch (state) {
+    case 1: return "CLOSED";
+    case 2: return "LISTEN";
+    case 3: return "SYN_SENT";
+    case 4: return "SYN_RCVD";
+    case 5: return "ESTABLISHED";
+    case 6: return "FIN_WAIT1";
+    case 7: return "FIN_WAIT2";
+    case 8: return "CLOSE_WAIT";
+    case 9: return "CLOSING";
+    case 10: return "LAST_ACK";
+    case 11: return "TIME_WAIT";
+    case 12: return "DELETE_TCB";
+    default: return "UNKNOWN";
+  }
+}
+
+static void format_v4(DWORD addr, char *out, size_t cap) {
+  (void)snprintf(out, cap, "%u.%u.%u.%u", (unsigned)(addr & 0xff), (unsigned)((addr >> 8) & 0xff),
+                 (unsigned)((addr >> 16) & 0xff), (unsigned)((addr >> 24) & 0xff));
+}
+
+int sliver_net_sockets(sliver_sock_t *out, int max) {
+  DWORD size = 0;
+  MIB_TCPTABLE_OWNER_PID *table;
+  int count = 0;
+
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  if (GetExtendedTcpTable(NULL, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) !=
+      ERROR_INSUFFICIENT_BUFFER) {
+    return -1;
+  }
+  table = (MIB_TCPTABLE_OWNER_PID *)malloc(size);
+  if (table == NULL) {
+    return -1;
+  }
+  if (GetExtendedTcpTable(table, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != NO_ERROR) {
+    free(table);
+    return -1;
+  }
+  for (DWORD i = 0; i < table->dwNumEntries && count < max; ++i) {
+    MIB_TCPROW_OWNER_PID *row = &table->table[i];
+    sliver_sock_t *e = &out[count];
+    memset(e, 0, sizeof(*e));
+    format_v4(row->dwLocalAddr, e->local_ip, sizeof(e->local_ip));
+    e->local_port = (uint32_t)ntohs((u_short)row->dwLocalPort);
+    format_v4(row->dwRemoteAddr, e->remote_ip, sizeof(e->remote_ip));
+    e->remote_port = (uint32_t)ntohs((u_short)row->dwRemotePort);
+    (void)snprintf(e->state, sizeof(e->state), "%s", tcp_state_name(row->dwState));
+    e->pid = (int32_t)row->dwOwningPid;
+    (void)snprintf(e->proto, sizeof(e->proto), "%s", "tcp");
+    count++;
+  }
+  free(table);
+  return count;
+}
 
 

@@ -86,3 +86,21 @@ int sliver_ifconfig_encode(sliver_buf_t *out, const sliver_iface_t *ifs, int cou
                            const char *err);
 
 
+
+/* --- sockets (netstat) --------------------------------------------------- */
+typedef struct {
+  char local_ip[64];
+  uint32_t local_port;
+  char remote_ip[64];
+  uint32_t remote_port;
+  char state[24];
+  uint32_t uid;
+  int32_t pid;
+  char proto[8];
+} sliver_sock_t;
+
+int sliver_net_sockets(sliver_sock_t *out, int max);
+
+/* Ifconfig + Netstat + Mount encoders (kept next to the data they encode). */
+int sliver_netstat_encode(sliver_buf_t *out, const sliver_sock_t *entries, int count,
+                          const char *err);

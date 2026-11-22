@@ -1,4 +1,5 @@
 /* src/proto/proto.c - minimal protobuf writer/reader and Sliver messages. */
+#include "sliver/fs.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 
@@ -1229,4 +1230,106 @@ int sliver_ifconfig_encode(sliver_buf_t *out, const sliver_iface_t *ifs, int cou
   }
   return encode_response(out, err);
 }
+
+
+/* --- Netstat ------------------------------------------------------------ */
+static int encode_sockaddr(sliver_buf_t *out, uint32_t field, const char *ip, uint32_t port) {
+  sliver_buf_t msg;
+
+  sliver_buf_init(&msg);
+  if (sliver_buf_put_string(&msg, 1, ip != NULL ? ip : "") != 0 ||
+      sliver_buf_put_uint32(&msg, 2, port) != 0) {
+    sliver_buf_free(&msg);
+    return -1;
+  }
+  if (sliver_buf_put_tag(out, field, 2) != 0 || sliver_buf_put_varint(out, msg.len) != 0 ||
+      sliver_buf_append(out, msg.data, msg.len) != 0) {
+    sliver_buf_free(&msg);
+    return -1;
+  }
+  sliver_buf_free(&msg);
+  return 0;
+}
+
+int sliver_netstat_encode(sliver_buf_t *out, const sliver_sock_t *entries, int count,
+                          const char *err) {
+  int i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    const sliver_sock_t *e = &entries[i];
+    sliver_buf_t entry;
+    sliver_buf_t proc;
+
+    sliver_buf_init(&entry);
+    if (encode_sockaddr(&entry, 1, e->local_ip, e->local_port) != 0 ||
+        encode_sockaddr(&entry, 2, e->remote_ip, e->remote_port) != 0 ||
+        sliver_buf_put_string(&entry, 3, e->state) != 0 ||
+        sliver_buf_put_uint32(&entry, 4, e->uid) != 0 ||
+        sliver_buf_put_string(&entry, 6, e->proto) != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    /* Process{Pid=1, Executable=3}: only the pid is known cheaply here. */
+    if (e->pid > 0) {
+      sliver_buf_init(&proc);
+      if (sliver_buf_put_int32(&proc, 1, e->pid) != 0) {
+        sliver_buf_free(&proc);
+        sliver_buf_free(&entry);
+        return -1;
+      }
+      if (sliver_buf_put_tag(&entry, 5, 2) != 0 || sliver_buf_put_varint(&entry, proc.len) != 0 ||
+          sliver_buf_append(&entry, proc.data, proc.len) != 0) {
+        sliver_buf_free(&proc);
+        sliver_buf_free(&entry);
+        return -1;
+      }
+      sliver_buf_free(&proc);
+    }
+    if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, entry.len) != 0 ||
+        sliver_buf_append(out, entry.data, entry.len) != 0) {
+      sliver_buf_free(&entry);
+      return -1;
+    }
+    sliver_buf_free(&entry);
+  }
+  return encode_response(out, err);
+}
+
+/* --- Mount -------------------------------------------------------------- */
+int sliver_mount_encode(sliver_buf_t *out, const sliver_mount_t *mounts, int count,
+                        const char *err) {
+  int i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  for (i = 0; i < count; ++i) {
+    const sliver_mount_t *m = &mounts[i];
+    sliver_buf_t msg;
+
+    sliver_buf_init(&msg);
+    if (sliver_buf_put_string(&msg, 1, m->volume_name) != 0 ||
+        sliver_buf_put_string(&msg, 2, m->volume_type) != 0 ||
+        sliver_buf_put_string(&msg, 3, m->mount_point) != 0 ||
+        sliver_buf_put_string(&msg, 4, m->label) != 0 ||
+        sliver_buf_put_string(&msg, 5, m->file_system) != 0 ||
+        sliver_buf_put_uint64(&msg, 6, m->used_space) != 0 ||
+        sliver_buf_put_uint64(&msg, 7, m->free_space) != 0 ||
+        sliver_buf_put_uint64(&msg, 8, m->total_space) != 0) {
+      sliver_buf_free(&msg);
+      return -1;
+    }
+    if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, msg.len) != 0 ||
+        sliver_buf_append(out, msg.data, msg.len) != 0) {
+      sliver_buf_free(&msg);
+      return -1;
+    }
+    sliver_buf_free(&msg);
+  }
+  return encode_response(out, err);
+}
+
 

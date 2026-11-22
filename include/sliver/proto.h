@@ -300,6 +300,10 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_TUNNEL_CLOSE 23u
 #define SLIVER_MSG_SHELL_RESIZE_REQ 135u
 #define SLIVER_MSG_CURRENT_TOKEN_OWNER_REQ 100u
+#define SLIVER_MSG_NETSTAT_REQ 49u
+#define SLIVER_MSG_NETSTAT 49u
+#define SLIVER_MSG_MOUNT_REQ 134u
+#define SLIVER_MSG_MOUNT 134u
 #define SLIVER_MSG_IFCONFIG_REQ 42u
 #define SLIVER_MSG_IFCONFIG 43u
 #define SLIVER_MSG_MV_REQ 98u
@@ -321,6 +325,7 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 
 
 

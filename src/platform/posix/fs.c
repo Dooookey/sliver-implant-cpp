@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <utime.h>
 #include <unistd.h>
 
@@ -228,4 +229,46 @@ int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
   times.modtime = (time_t)mtime;
   return utime(path, &times) == 0 ? 0 : -1;
 }
+
+
+/* --- mounts -------------------------------------------------------------- */
+int sliver_fs_mounts(sliver_mount_t *out, int max) {
+  FILE *f;
+  char line[512];
+  int count = 0;
+
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  f = fopen("/proc/mounts", "r");
+  if (f == NULL) {
+    return -1;
+  }
+  while (count < max && fgets(line, sizeof(line), f) != NULL) {
+    char dev[128];
+    char point[260];
+    char type[64];
+    struct statvfs vfs;
+    sliver_mount_t *m;
+
+    if (sscanf(line, "%127s %259s %63s", dev, point, type) < 3) {
+      continue;
+    }
+    m = &out[count];
+    memset(m, 0, sizeof(*m));
+    (void)snprintf(m->volume_name, sizeof(m->volume_name), "%s", dev);
+    (void)snprintf(m->mount_point, sizeof(m->mount_point), "%s", point);
+    (void)snprintf(m->file_system, sizeof(m->file_system), "%s", type);
+    (void)snprintf(m->volume_type, sizeof(m->volume_type), "%s", "filesystem");
+    if (statvfs(point, &vfs) == 0) {
+      m->total_space = (uint64_t)vfs.f_blocks * (uint64_t)vfs.f_frsize;
+      m->free_space = (uint64_t)vfs.f_bfree * (uint64_t)vfs.f_frsize;
+      m->used_space = m->total_space >= m->free_space ? m->total_space - m->free_space : 0;
+    }
+    count++;
+  }
+  (void)fclose(f);
+  return count;
+}
+
 

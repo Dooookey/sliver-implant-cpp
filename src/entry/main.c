@@ -565,6 +565,39 @@ static int run_ifconfig_selftest(void) {
   return 0;
 }
 
+static int run_netstat_selftest(void) {
+  sliver_sock_t socks[64];
+  int n = sliver_net_sockets(socks, 64);
+  int i;
+  if (n <= 0) {
+    LOG_ERROR("netstat selftest: no sockets (%d)", n);
+    return 1;
+  }
+  for (i = 0; i < n && i < 5; ++i) {
+    LOG_INFO("netstat selftest: %s %s:%u -> %s:%u %s pid=%d", socks[i].proto, socks[i].local_ip,
+             (unsigned)socks[i].local_port, socks[i].remote_ip, (unsigned)socks[i].remote_port,
+             socks[i].state, socks[i].pid);
+  }
+  LOG_INFO("netstat selftest: %d entries", n);
+  return 0;
+}
+
+static int run_mount_selftest(void) {
+  sliver_mount_t mounts[26];
+  int n = sliver_fs_mounts(mounts, 26);
+  int i;
+  if (n <= 0) {
+    LOG_ERROR("mount selftest: no volumes (%d)", n);
+    return 1;
+  }
+  for (i = 0; i < n; ++i) {
+    LOG_INFO("mount selftest: %s %s fs=%s total=%llu free=%llu", mounts[i].mount_point,
+             mounts[i].label, mounts[i].file_system, (unsigned long long)mounts[i].total_space,
+             (unsigned long long)mounts[i].free_space);
+  }
+  return 0;
+}
+
 static int run_cp_selftest(const char *src, const char *dst) {
   int64_t written = 0;
   if (sliver_fs_copy(src, dst, &written) != 0) {
@@ -716,6 +749,16 @@ int sliver_cli_main(int argc, char **argv) {
     sliver_plat_cleanup();
     return rc;
   }
+  if (argc > 1 && strcmp(argv[1], "--netstat-selftest") == 0) {
+    int rc = run_netstat_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
+  if (argc > 1 && strcmp(argv[1], "--mount-selftest") == 0) {
+    int rc = run_mount_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--ifconfig-selftest") == 0) {
     int rc = run_ifconfig_selftest();
     sliver_plat_cleanup();
@@ -799,6 +842,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
 
 
 

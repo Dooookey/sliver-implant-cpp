@@ -248,3 +248,55 @@ int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
   (void)CloseHandle(h);
   return 0;
 }
+
+/* --- mounts -------------------------------------------------------------- */
+int sliver_fs_mounts(sliver_mount_t *out, int max) {
+  DWORD mask;
+  int count = 0;
+  char letter;
+
+  if (out == NULL || max <= 0) {
+    return -1;
+  }
+  mask = GetLogicalDrives();
+  for (letter = 'A'; letter <= 'Z' && count < max; ++letter) {
+    char root[8];
+    ULARGE_INTEGER free_bytes;
+    ULARGE_INTEGER total_bytes;
+    ULARGE_INTEGER total_free;
+    wchar_t root_w[8];
+    wchar_t label_w[64];
+    wchar_t fs_w[32];
+    sliver_mount_t *m;
+
+    if ((mask & (1u << (letter - 'A'))) == 0) {
+      continue;
+    }
+    (void)snprintf(root, sizeof(root), "%c:\\", letter);
+    m = &out[count];
+    memset(m, 0, sizeof(*m));
+    (void)snprintf(m->mount_point, sizeof(m->mount_point), "%s", root);
+    (void)snprintf(m->volume_name, sizeof(m->volume_name), "%s", root);
+    if (!GetDiskFreeSpaceExA(root, NULL, &total_bytes, &free_bytes)) {
+      continue;
+    }
+    total_free.QuadPart = 0;
+    m->total_space = (uint64_t)total_bytes.QuadPart;
+    m->free_space = (uint64_t)free_bytes.QuadPart;
+    m->used_space = m->total_space >= m->free_space ? m->total_space - m->free_space : 0;
+    (void)MultiByteToWideChar(CP_ACP, 0, root, -1, root_w, 8);
+    label_w[0] = 0;
+    fs_w[0] = 0;
+    (void)GetVolumeInformationW(root_w, label_w, 64, NULL, NULL, NULL, fs_w, 32);
+    (void)WideCharToMultiByte(CP_UTF8, 0, label_w, -1, m->label, (int)sizeof(m->label), NULL, NULL);
+    (void)WideCharToMultiByte(CP_UTF8, 0, fs_w, -1, m->file_system,
+                              (int)sizeof(m->file_system), NULL, NULL);
+    (void)snprintf(m->volume_type, sizeof(m->volume_type), "%s", "fixed");
+    count++;
+  }
+  return count;
+}
+
+
+
+
