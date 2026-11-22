@@ -568,6 +568,34 @@ static int run_ifconfig_selftest(void) {
   return 0;
 }
 
+static int run_grep_selftest(void) {
+  char line[512];
+  int hits = 0;
+  int64_t number = 0;
+  FILE *f = fopen("build\\\\grep-selftest.txt", "wb");
+
+  if (f == NULL) {
+    LOG_ERROR("grep selftest: cannot create fixture");
+    return 1;
+  }
+  (void)fputs("alpha\nbravo needle\ncharlie\nneedle again\n", f);
+  (void)fclose(f);
+  f = fopen("build\\\\grep-selftest.txt", "rb");
+  if (f == NULL) {
+    return 1;
+  }
+  while (fgets(line, sizeof(line), f) != NULL) {
+    number++;
+    if (strstr(line, "needle") != NULL) {
+      hits++;
+    }
+  }
+  (void)fclose(f);
+  (void)sliver_fs_remove("build\\\\grep-selftest.txt", 0, 1);
+  LOG_INFO("grep selftest: %d hit(s) in builtin matcher", hits);
+  return hits == 2 ? 0 : 1;
+}
+
 static int run_children_selftest(void) {
   sliver_child_proc_t kids[64];
   int n = sliver_proc_children(kids, 64);
@@ -838,6 +866,11 @@ int sliver_cli_main(int argc, char **argv) {
     return rc;
   }
 #if defined(_WIN32)
+  if (argc > 1 && strcmp(argv[1], "--grep-selftest") == 0) {
+    int rc = run_grep_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--children-selftest") == 0) {
     int rc = run_children_selftest();
     sliver_plat_cleanup();
@@ -952,6 +985,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
 
 
 

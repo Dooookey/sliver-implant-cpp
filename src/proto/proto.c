@@ -1496,3 +1496,98 @@ int sliver_execute_children_encode(sliver_buf_t *out, const sliver_child_proc_t 
   return encode_response(out, err);
 }
 
+
+/* --- Grep --------------------------------------------------------------- */
+/* GrepReq{SearchPattern=1, Path=2, Recursive=3, LinesBefore=4, LinesAfter=5}. */
+int sliver_grep_req_decode(const void *data, size_t len, char *pattern, size_t pattern_cap,
+                           char *path, size_t path_cap, int *recursive, int *before, int *after) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (pattern == NULL || path == NULL) {
+    return -1;
+  }
+  pattern[0] = 0;
+  path[0] = 0;
+  if (recursive != NULL) *recursive = 0;
+  if (before != NULL) *before = 0;
+  if (after != NULL) *after = 0;
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (wire == 2 && field == 1) {
+      if (sliver_reader_string(&r, pattern, pattern_cap) != 0) return -1;
+    } else if (wire == 2 && field == 2) {
+      if (sliver_reader_string(&r, path, path_cap) != 0) return -1;
+    } else if (wire == 0 && field == 3) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) return -1;
+      if (recursive != NULL) *recursive = v != 0;
+    } else if (wire == 0 && field == 4) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) return -1;
+      if (before != NULL) *before = (int)v;
+    } else if (wire == 0 && field == 5) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) return -1;
+      if (after != NULL) *after = (int)v;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+/* Grep{Results=1 map<string, GrepResultsForFile{FileResults=1, IsBinary=2}>, ...}.
+ * GrepResult{LineNumber=1, Line=3, LinesBefore=4, LinesAfter=5}. */
+int sliver_grep_encode(sliver_buf_t *out, const char *abs_path, const char *file,
+                       const sliver_grep_hit_t *hits, int count, const char *err) {
+  sliver_buf_t results;
+  sliver_buf_t per_file;
+  int i;
+
+  if (out == NULL) {
+    return -1;
+  }
+  sliver_buf_init(&per_file);
+  for (i = 0; i < count; ++i) {
+    sliver_buf_t msg;
+
+    sliver_buf_init(&msg);
+    if (sliver_buf_put_int64(&msg, 1, hits[i].line_number) != 0 ||
+        sliver_buf_put_string(&msg, 3, hits[i].line) != 0) {
+      sliver_buf_free(&msg);
+      sliver_buf_free(&per_file);
+      return -1;
+    }
+    if (sliver_buf_put_tag(&per_file, 1, 2) != 0 || sliver_buf_put_varint(&per_file, msg.len) != 0 ||
+        sliver_buf_append(&per_file, msg.data, msg.len) != 0) {
+      sliver_buf_free(&msg);
+      sliver_buf_free(&per_file);
+      return -1;
+    }
+    sliver_buf_free(&msg);
+  }
+  sliver_buf_init(&results);
+  if (sliver_buf_put_string(&results, 1, file != NULL ? file : "") != 0 ||
+      sliver_buf_put_tag(&results, 2, 2) != 0 ||
+      sliver_buf_put_varint(&results, per_file.len) != 0 ||
+      sliver_buf_append(&results, per_file.data, per_file.len) != 0) {
+    sliver_buf_free(&per_file);
+    sliver_buf_free(&results);
+    return -1;
+  }
+  if (sliver_buf_put_tag(out, 1, 2) != 0 || sliver_buf_put_varint(out, results.len) != 0 ||
+      sliver_buf_append(out, results.data, results.len) != 0) {
+    sliver_buf_free(&per_file);
+    sliver_buf_free(&results);
+    return -1;
+  }
+  sliver_buf_free(&per_file);
+  sliver_buf_free(&results);
+  if (abs_path != NULL && abs_path[0] != 0 && sliver_buf_put_string(out, 2, abs_path) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
