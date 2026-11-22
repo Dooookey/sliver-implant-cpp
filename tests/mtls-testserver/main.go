@@ -33,6 +33,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -470,6 +471,50 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	}
 	_ = os.Remove(tmpFile)
 
+	// Port forward: peer runs a local HTTP server, asks the implant to relay to
+	// it through tunnel 0xAABBCCEE, then speaks HTTP over the tunnel.
+	echoAddr, stopEcho := startEchoServer()
+	_, echoPortStr, _ := net.SplitHostPort(echoAddr)
+	echoPort, _ := strconv.Atoi(echoPortStr)
+	defer stopEcho()
+	pfTunnel := uint64(0xAABBCCEE)
+	pfReq := append(protoStr(3, "127.0.0.1"), appendUvarint(nil, 1<<3)...)
+	pfReq = appendUvarint(pfReq, uint64(echoPort))
+	pfReq = append(pfReq, appendUvarint(nil, 8<<3)...)
+	pfReq = appendUvarint(pfReq, pfTunnel)
+	if _, pfBody, err := rpcCall(sess, serverPriv, serverPub, clientPub, 55, 80, pfReq, 81); err != nil {
+		log.Printf("portfwd failed: %v (echo %s)", err, echoAddr)
+	} else {
+		_, pf := envelopeFields(pfBody[3])
+		fmt.Printf("PORTFWD ok: host=%q port=%d tunnel=%d\n", string(pf[3]), pf[1], pf[8])
+		// Send an HTTP request through the tunnel and read the response.
+		req := []byte("GET / HTTP/1.0\r\nHost: x\r\n\r\n")
+		td := append(protoStrBytes(1, req), appendUvarint(nil, 8<<3)...)
+		td = appendUvarint(td, pfTunnel)
+		env := makeEnvelope(56, 22, td)
+		if st, err := sess.OpenStream(); err == nil {
+			_ = writeFrame(st, rawSignature(serverPriv, serverPub, env), env)
+		}
+		respText := ""
+		for i := 0; i < 20 && !strings.Contains(respText, "hello-portfwd") ; i++ {
+			rs, err := sess.AcceptStream()
+			if err != nil {
+				break
+			}
+			_, envOut, err := readFrame(rs)
+			if err != nil {
+				break
+			}
+			v, b := envelopeFields(envOut)
+			if v[2] == 22 {
+				_, db := envelopeFields(b[3])
+				respText += string(db[1])
+			}
+			rs.Close()
+		}
+		fmt.Printf("PORTFWD DATA: %q\n", strings.TrimSpace(respText))
+	}
+
 	// Server initiated stream with a message type the implant does not implement
 	// (MsgType 200): it must answer Envelope{ID, UnknownMessageType:true}.
 	unknown := []byte{0x08, 0xb9, 0x60, 0x10, 0xc8, 0x01, 0x1a, 0x01, 0x78}
@@ -765,5 +810,31 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 
 
 
+
+
+
+
+// startEchoServer runs a tiny HTTP server and returns its address + a stopper.
+func startEchoServer() (string, func()) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatalf("echo listen: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf)
+				_, _ = c.Write([]byte("HTTP/1.0 200 OK\r\nContent-Length: 13\r\n\r\nhello-portfwd"))
+			}(conn)
+		}
+	}()
+	return ln.Addr().String(), func() { _ = ln.Close() }
+}
 
 

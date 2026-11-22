@@ -273,6 +273,8 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_TUNNEL_DATA 22u
 #define SLIVER_MSG_TUNNEL_CLOSE 23u
 #define SLIVER_MSG_SHELL_RESIZE_REQ 135u
+#define SLIVER_MSG_PORTFWD_REQ 80u
+#define SLIVER_MSG_PORTFWD 81u
 #define SLIVER_MSG_BEACON_REGISTER 93u
 #define SLIVER_MSG_BEACON_TASKS 94u
 
@@ -281,6 +283,7 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 
 
 
