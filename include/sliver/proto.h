@@ -165,6 +165,8 @@ typedef struct {
 int sliver_env_encode(sliver_buf_t *out, const sliver_env_pair_t *vars, size_t count,
                       const char *err);
 /* CurrentTokenOwner{Output=1, Response=9}. */
+ /* Response{Err=9} only: used by handlers whose reply has no payload. */
+int sliver_empty_response_encode(sliver_buf_t *out, const char *err);
 int sliver_current_token_owner_encode(sliver_buf_t *out, const char *who);
 
 
@@ -325,6 +327,7 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #endif
 
 #endif /* SLIVER_PROTO_H */
+
 
 
 

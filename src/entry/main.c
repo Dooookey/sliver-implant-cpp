@@ -20,6 +20,7 @@
 #include "sliver/log.h"
 #include "sliver/platform.h"
 #include "sliver/fs.h"
+#include "sliver/registry.h"
 #include "sliver/proc.h"
 #include "sliver/proto.h"
 #include "sliver/session.h"
@@ -565,6 +566,48 @@ static int run_ifconfig_selftest(void) {
   return 0;
 }
 
+#if defined(_WIN32)
+static int run_registry_selftest(void) {
+  char value[1024];
+  uint8_t binary[512];
+  size_t blen = 0;
+  uint32_t type = 0;
+  char names[256][256];
+  int n;
+  int rc = 0;
+
+  value[0] = 0;
+  if (sliver_reg_read("HKLM", "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "ProductName",
+                      value, sizeof(value), binary, sizeof(binary), &blen, &type) == 0) {
+    LOG_INFO("registry selftest: ProductName=%s type=%u", value, type);
+  } else {
+    LOG_ERROR("registry selftest: read failed");
+    rc = 1;
+  }
+  if (sliver_reg_create("HKCU", "Software", "SliverCppTest") != 0) {
+    LOG_ERROR("registry selftest: create key failed");
+    return 1;
+  }
+  LOG_INFO("registry selftest: create key ok");
+  if (sliver_reg_write("HKCU", "Software\\\\SliverCppTest", "Value", SLIVER_REG_STRING, "hello",
+                       NULL, 0, 0, 0) == 0) {
+    LOG_INFO("registry selftest: write ok");
+    if (sliver_reg_delete("HKCU", "Software\\\\SliverCppTest", "Value") == 0) {
+      LOG_INFO("registry selftest: delete ok");
+    } else {
+      LOG_WARN("registry selftest: delete failed");
+    }
+  } else {
+    LOG_ERROR("registry selftest: write failed");
+    rc = 1;
+  }
+  n = sliver_reg_subkeys("HKLM", "SOFTWARE", names, 256);
+  LOG_INFO("registry selftest: %d subkeys under HKLM\\SOFTWARE (%s)", n > 0 ? n : 0,
+           n > 0 ? names[0] : "-");
+  return rc;
+}
+#endif
+
 static int run_netstat_selftest(void) {
   sliver_sock_t socks[64];
   int n = sliver_net_sockets(socks, 64);
@@ -749,6 +792,13 @@ int sliver_cli_main(int argc, char **argv) {
     sliver_plat_cleanup();
     return rc;
   }
+#if defined(_WIN32)
+  if (argc > 1 && strcmp(argv[1], "--registry-selftest") == 0) {
+    int rc = run_registry_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
+#endif
   if (argc > 1 && strcmp(argv[1], "--netstat-selftest") == 0) {
     int rc = run_netstat_selftest();
     sliver_plat_cleanup();
@@ -842,6 +892,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
 
 
 

