@@ -24,6 +24,8 @@ typedef struct {
   sliver_socket_t *sock;
   uint64_t sequence;
   uint64_t read_sequence;
+  uint8_t pending[8192];
+  size_t pending_len;
   volatile int stop;
   sliver_mutex_t *lock;
 } portfwd_t;
@@ -144,7 +146,8 @@ int sliver_portfwd_bind(uint64_t id) {
       f->used = 1;
       f->id = id;
       f->lock = sliver_mutex_create();
-      forward_ack(f);
+      /* No reply here: the client binds the tunnel server-side with this frame;
+       * answering it confused the peer state machine (data never flowed). */
       return 1;
     }
   }
@@ -221,6 +224,11 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
     if (f->lock == NULL) {
       f->lock = sliver_mutex_create();
     }
+    if (f->pending_len != 0) {
+      LOG_DEBUG("portfwd: flushing %u buffered bytes", (unsigned)f->pending_len);
+      (void)sliver_socket_send(f->sock, f->pending, f->pending_len);
+      f->pending_len = 0;
+    }
     if (sliver_thread_create(forward_thread, f) == NULL) {
       forward_release(f);
       return -1;
@@ -267,11 +275,16 @@ int sliver_portfwd_tunnel_data(const sliver_tunnel_data_t *td) {
     return 1;
   }
   if (f->sock == NULL) {
-    /* The forward was never established (dial failed): tell the peer to close
-     * instead of letting its connection hang. */
-    LOG_WARN("portfwd: tunnel=%llu has no socket, closing", (unsigned long long)f->id);
-    (void)forward_send_data(f, NULL, 0, 1);
-    forward_release(f);
+    /* Data can arrive before PortfwdReq is processed: buffer it instead of
+     * dropping the connection. */
+    size_t room = sizeof(f->pending) - f->pending_len;
+    size_t take = td->data_len < room ? td->data_len : room;
+    if (take != 0) {
+      memcpy(f->pending + f->pending_len, td->data, take);
+      f->pending_len += take;
+      LOG_DEBUG("portfwd: buffered %u bytes until the socket is ready", (unsigned)take);
+    }
+    forward_ack(f);
     return 1;
   }
   if (td->sequence == f->read_sequence) {
@@ -297,6 +310,8 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
+
 
 
 
