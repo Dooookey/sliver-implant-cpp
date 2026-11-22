@@ -48,6 +48,7 @@ typedef struct {
   int failed;
   int go_away;
   uint32_t pending_accept;
+  int pending_valid;
   /* Ids we opened ourselves: a SYN/window-update on them is not a peer stream
    * (the slot may already be released), it is the ACK of our own SYN. */
   uint32_t local_ids[SLIVER_YAMUX_MAX_STREAMS];
@@ -83,6 +84,7 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id);
 #endif
 
 #endif /* SLIVER_YAMUX_H */
+
 
 
 

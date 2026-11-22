@@ -113,7 +113,8 @@ static void release_stream(sliver_yamux_stream_t *s) {
 
 /* Frees the slot once both sides are done with the stream. */
 static void maybe_release(sliver_yamux_stream_t *s) {
-  if (s != NULL && s->used && s->fin_received && s->closed_write) {
+  if (s != NULL && s->used && s->fin_received && s->closed_write &&
+      s->in_off >= s->in.len) {
     release_stream(s);
   }
 }
@@ -268,7 +269,8 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
       uint8_t chunk[SLIVER_YAMUX_MAX_FRAME];
       uint32_t remaining = length;
       if (s == NULL) {
-        /* Unknown stream: drain the payload. */
+        /* Unknown stream (already released): still replenish its window so the
+         * peer's writes do not stall forever, then ask it to drop the stream. */
         while (remaining > 0) {
           uint32_t n = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
           if (io_read_full(y, chunk, n) != 0) {
@@ -277,13 +279,41 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
           }
           remaining -= n;
         }
+        if (length != 0) {
+          (void)replenish(y, id, length);
+        }
+        (void)send_frame(y, YAMUX_TYPE_DATA, YAMUX_FLAG_RST, id, NULL, 0);
         return 0;
+      }
+      /* Enforce the receive window we advertised, and compact the consumed
+       * prefix so a long-lived stream does not grow without bound. */
+      if (s->in_off != 0) {
+        size_t live = s->in.len - s->in_off;
+        memmove(s->in.data, s->in.data + s->in_off, live);
+        s->in.len = live;
+        s->in_off = 0;
       }
       while (remaining > 0) {
         uint32_t n = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
         if (io_read_full(y, chunk, n) != 0) {
           y->failed = 1;
           return -1;
+        }
+        if (s->in.len + n > SLIVER_YAMUX_INITIAL_WINDOW * 2) {
+          /* Over-window data: drop it and reset the stream instead of growing
+           * the heap without limit. */
+          remaining -= n;
+          while (remaining > 0) {
+            uint32_t m = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
+            if (io_read_full(y, chunk, m) != 0) {
+              y->failed = 1;
+              return -1;
+            }
+            remaining -= m;
+          }
+          (void)send_frame(y, YAMUX_TYPE_DATA, YAMUX_FLAG_RST, id, NULL, 0);
+          release_stream(s);
+          return 0;
         }
         if (sliver_buf_append(&s->in, chunk, n) != 0) {
           y->failed = 1;
@@ -307,7 +337,9 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
           /* ACK of a stream we opened ourselves. */
           if (length != 0) {
             sliver_yamux_stream_t *own = find_stream(y, id);
-            own->send_window += length;
+            own->send_window = (UINT32_MAX - own->send_window < length)
+                                   ? UINT32_MAX
+                                   : own->send_window + length;
           }
           return 0;
         }
@@ -315,11 +347,13 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
         if (alloc_stream(y, id) != NULL) {
           (void)send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_ACK, id, NULL, 0);
           y->pending_accept = id;
+          y->pending_valid = 1;
         }
         return 0;
       }
       if (s != NULL) {
-        s->send_window += length;
+        s->send_window = (UINT32_MAX - s->send_window < length) ? UINT32_MAX
+                                                                 : s->send_window + length;
       }
       return 0;
     }
@@ -417,7 +451,7 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
   if (y == NULL || stream_id == NULL) {
     return -1;
   }
-  while (y->pending_accept == 0) {
+  while (!y->pending_valid) {
     int rc;
     if (y->failed || y->go_away) {
       return -1;
@@ -433,6 +467,7 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
   }
   *stream_id = y->pending_accept;
   y->pending_accept = 0;
+  y->pending_valid = 0;
   return 0;
 }
 
@@ -466,6 +501,8 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     }
   }
 }
+
+
 
 
 

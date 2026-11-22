@@ -12,7 +12,7 @@
 #include <tlhelp32.h>
 
 #define SLIVER_MAX_PROCS 4096
-#define SLIVER_MAX_ENV 4096
+#define SLIVER_MAX_ENV 1024
 
 int sliver_proc_list(sliver_proc_t **out, size_t *count) {
   HANDLE snap;
@@ -44,8 +44,14 @@ int sliver_proc_list(sliver_proc_t **out, size_t *count) {
       procs[n].pid = (int32_t)pe.th32ProcessID;
       procs[n].ppid = (int32_t)pe.th32ParentProcessID;
       (void)snprintf(procs[n].exe, sizeof(procs[n].exe), "%s", pe.szExeFile);
-      procs[n].session_id = 0;
-      (void)snprintf(procs[n].arch, sizeof(procs[n].arch), "%s", "x64");
+      {
+        DWORD session = 0;
+        if (ProcessIdToSessionId((DWORD)pe.th32ProcessID, &session)) {
+          procs[n].session_id = (int32_t)session;
+        }
+      }
+      (void)snprintf(procs[n].arch, sizeof(procs[n].arch), "%s",
+                     sizeof(void *) == 8 ? "x64" : "x86");
       n++;
     } while (Process32Next(snap, &pe));
   }
@@ -149,3 +155,4 @@ int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_ca
   *out_len = (size_t)acp_len;
   return 0;
 }
+

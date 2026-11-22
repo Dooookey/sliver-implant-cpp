@@ -13,7 +13,8 @@
 
 extern char **environ;
 
-#define SLIVER_MAX_PROCS 8192
+#define SLIVER_MAX_PROCS 2048
+#define SLIVER_MAX_ENV 1024
 
 static int read_file_line(const char *path, char *buf, size_t cap) {
   FILE *f = fopen(path, "r");
@@ -80,7 +81,23 @@ int sliver_proc_list(sliver_proc_t **out, size_t *count) {
     if (stat(path, &st) == 0) {
       (void)snprintf(procs[n].owner, sizeof(procs[n].owner), "%d", (int)st.st_uid);
     }
-    (void)snprintf(procs[n].cmdline, sizeof(procs[n].cmdline), "/proc/%ld/exe", pid);
+    {
+      char cmd[512];
+      FILE *cf;
+      (void)snprintf(path, sizeof(path), "/proc/%ld/cmdline", pid);
+      cf = fopen(path, "rb");
+      if (cf != NULL) {
+        size_t got = fread(cmd, 1, sizeof(cmd) - 1, cf);
+        (void)fclose(cf);
+        for (size_t k = 0; k < got; ++k) {
+          if (cmd[k] == 0) {
+            cmd[k] = (k + 1 < got) ? \' \' : 0;
+          }
+        }
+        cmd[got] = 0;
+        (void)snprintf(procs[n].cmdline, sizeof(procs[n].cmdline), "%s", cmd);
+      }
+    }
     (void)snprintf(procs[n].arch, sizeof(procs[n].arch), "%s", sizeof(void *) == 8 ? "x64" : "x86");
     n++;
   }
@@ -107,11 +124,11 @@ int sliver_env_list(sliver_env_t **out, size_t *count) {
   *out = NULL;
   *count = 0;
 
-  vars = (sliver_env_t *)calloc(SLIVER_MAX_PROCS, sizeof(sliver_env_t));
+  vars = (sliver_env_t *)calloc(SLIVER_MAX_ENV, sizeof(sliver_env_t));
   if (vars == NULL) {
     return -1;
   }
-  for (it = environ; it != NULL && *it != NULL && n < SLIVER_MAX_PROCS; ++it) {
+  for (it = environ; it != NULL && *it != NULL && n < SLIVER_MAX_ENV; ++it) {
     const char *eq = strchr(*it, '=');
     size_t klen;
     if (eq == NULL) {
@@ -132,3 +149,6 @@ int sliver_env_list(sliver_env_t **out, size_t *count) {
 }
 
 void sliver_env_free(sliver_env_t *vars) { free(vars); }
+
+
+

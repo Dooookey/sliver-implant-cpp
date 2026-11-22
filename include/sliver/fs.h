@@ -26,6 +26,7 @@ typedef int (*sliver_dir_cb)(const sliver_dir_entry_t *entry, void *ctx);
 int sliver_fs_list(const char *path, sliver_dir_cb cb, void *ctx);
 
 int sliver_fs_exists(const char *path);
+int sliver_fs_is_dir(const char *path);
 int sliver_fs_getcwd(char *buf, size_t cap);
 int sliver_fs_chdir(const char *path);
 /* Creates one directory level. Returns 0 on success (existing dir counts). */
@@ -50,3 +51,4 @@ int sliver_fs_abspath(const char *path, char *buf, size_t cap);
 #endif
 
 #endif /* SLIVER_FS_H */
+

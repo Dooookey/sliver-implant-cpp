@@ -161,6 +161,18 @@ int sliver_frame_read(const char *server_pubkey_text, sliver_io_read_fn read_fn,
   }
   env_len = get_u32_le(len_le);
   if (env_len == 0 || env_len > SLIVER_FRAME_MAX_ENVELOPE) {
+    /* Drain the oversized payload so the stream stays framed, then report it. */
+    if (env_len != 0 && env_len <= (64u * 1024u * 1024u)) {
+      unsigned char discard[512];
+      uint32_t left = env_len;
+      while (left > 0) {
+        uint32_t n = left > sizeof(discard) ? (uint32_t)sizeof(discard) : left;
+        if (read_full(read_fn, ctx, discard, n) != 0) {
+          return -1;
+        }
+        left -= n;
+      }
+    }
     return -2;
   }
   env_out->data = (unsigned char *)malloc(env_len);

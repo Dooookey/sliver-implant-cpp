@@ -277,6 +277,12 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   sliver_socket_set_recv_timeout(sock, SLIVER_PORTFWD_POLL_MS);
   id = tunnel_id;
   f = forward_find(id);
+  if (f != NULL && f->sock != NULL) {
+    /* Same tunnel id requested twice: keep the first socket, drop the new one. */
+    sliver_socket_close(sock);
+    LOG_WARN("portfwd: tunnel=%llu already attached", (unsigned long long)id);
+    return -1;
+  }
   if (f != NULL) {
     /* Bound earlier by the client bind frame: attach the socket. */
     f->sock = sock;
@@ -379,6 +385,7 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
+
 
 
 

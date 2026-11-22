@@ -179,3 +179,12 @@ int sliver_fs_remove(const char *path, int recursive, int force) {
   return remove_tree(path, force);
 }
 
+
+int sliver_fs_is_dir(const char *path) {
+  DWORD attrs;
+  if (path == NULL || path[0] == '\0') {
+    return 0;
+  }
+  attrs = GetFileAttributesA(path);
+  return (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) ? 1 : 0;
+}
