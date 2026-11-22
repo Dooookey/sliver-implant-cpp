@@ -132,6 +132,49 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
     count++;
   }
   free(privs);
+  if (count == 0) {
+    /* An impersonation token can be an identification-level token whose privilege
+     * list is empty (and which carries no integrity SID). Fall back to the
+     * process token so the client still shows a meaningful table. */
+    LOG_DEBUG("privs: thread token exposed no privileges, falling back to process token");
+    (void)CloseHandle(token);
+    count = -1;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+      return -1;
+    }
+    {
+      DWORD size2 = 0;
+      TOKEN_PRIVILEGES *again;
+      (void)GetTokenInformation(token, TokenPrivileges, NULL, 0, &size2);
+      again = (TOKEN_PRIVILEGES *)calloc(1, (size_t)(size2 != 0 ? size2 : sizeof(TOKEN_PRIVILEGES)) + 64);
+      if (again == NULL) {
+        (void)CloseHandle(token);
+        return -1;
+      }
+      if (GetTokenInformation(token, TokenPrivileges, again, size2, &size2)) {
+        count = 0;
+        for (DWORD j = 0; j < again->PrivilegeCount && count < max; ++j) {
+          char nm[128] = {0};
+          char ds[256] = {0};
+          DWORD nl = sizeof(nm);
+          LUID luid = again->Privileges[j].Luid;
+          if (!LookupPrivilegeNameA(NULL, &luid, nm, &nl)) {
+            continue;
+          }
+          (void)snprintf(out[count].name, sizeof(out[count].name), "%s", nm);
+          (void)snprintf(out[count].description, sizeof(out[count].description), "%s",
+                         priv_description(nm));
+          (void)ds;
+          out[count].enabled = (again->Privileges[j].Attributes & SE_PRIVILEGE_ENABLED) != 0;
+          out[count].enabled_by_default =
+              (again->Privileges[j].Attributes & SE_PRIVILEGE_ENABLED_BY_DEFAULT) != 0;
+          out[count].removed = (again->Privileges[j].Attributes & SE_PRIVILEGE_REMOVED) != 0;
+          count++;
+        }
+      }
+      free(again);
+    }
+  }
 
   if (integrity != NULL && integrity_cap != 0) {
     DWORD isize = 0;
@@ -154,6 +197,7 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
   (void)CloseHandle(token);
   return count;
 }
+
 
 
 
