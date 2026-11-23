@@ -68,6 +68,9 @@ void sliver_mutex_unlock(sliver_mutex_t *m) {
 static DWORD WINAPI thread_trampoline(LPVOID opaque) {
   sliver_thread_t *t = (sliver_thread_t *)opaque;
   t->fn(t->arg);
+  /* The trampoline owns t: freeing it in detach/join raced with this read of
+   * t->fn/t->arg and crashed detached workers (execute/file/shell/portfwd). */
+  free(t);
   return 0;
 }
 
@@ -101,11 +104,11 @@ int sliver_thread_join(sliver_thread_t *t) {
     }
     (void)CloseHandle(t->handle);
   }
-  free(t);
+  /* t is freed by the trampoline. */
   return rc;
 }
 
-/* Detach: the thread keeps running and frees itself when it returns. */
+/* Detach: the thread keeps running; the trampoline frees t on exit. */
 void sliver_thread_detach(sliver_thread_t *t) {
   if (t == NULL) {
     return;
@@ -114,5 +117,4 @@ void sliver_thread_detach(sliver_thread_t *t) {
     (void)CloseHandle(t->handle);
     t->handle = NULL;
   }
-  free(t);
 }

@@ -418,8 +418,14 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
   while (sent < len) {
     size_t chunk;
     if (s->send_window == 0) {
-      if (sliver_yamux_pump(y) != 0) {
+      int prc = sliver_yamux_pump(y);
+      if (prc < 0) {
         return -1;
+      }
+      /* prc == 1 means "no frame available yet" (TLS recv timeout), not an error;
+       * retrying here is how a multi-frame response drains the window. */
+      if (prc == 1) {
+        sliver_sleep_ms(1);
       }
       continue;
     }

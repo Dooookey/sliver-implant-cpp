@@ -83,6 +83,8 @@ void sliver_mutex_unlock(sliver_mutex_t *m) {
 static void *thread_trampoline(void *opaque) {
   sliver_thread_t *t = (sliver_thread_t *)opaque;
   t->fn(t->arg);
+  /* The trampoline owns t (see win32/thread.c). */
+  free(t);
   return NULL;
 }
 
@@ -113,12 +115,12 @@ int sliver_thread_join(sliver_thread_t *t) {
   if (t->started) {
     rc = (pthread_join(t->handle, NULL) == 0) ? 0 : -1;
   }
-  free(t);
+  /* t is freed by the trampoline. */
   return rc;
 }
 
 
-/* Detach: the thread keeps running and frees itself when it returns. */
+/* Detach: the thread keeps running; the trampoline frees t on exit. */
 void sliver_thread_detach(sliver_thread_t *t) {
   if (t == NULL) {
     return;
@@ -127,5 +129,4 @@ void sliver_thread_detach(sliver_thread_t *t) {
     (void)pthread_detach(t->handle);
     t->started = 0;
   }
-  free(t);
 }
