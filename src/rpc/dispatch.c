@@ -338,11 +338,14 @@ static void execute_worker(void *arg) {
       status = 1;
       start_err = "execute: cannot start process";
     }
+    LOG_DEBUG("exec: child done status=%u out=%u err=%u, sending response", status,
+              (unsigned)out_buf.len, (unsigned)err_buf.len);
     sliver_buf_init(&msg);
     if (sliver_execute_encode(&msg, status, out_buf.data, out_buf.len, err_buf.data,
                               err_buf.len, pid, start_err) == 0) {
       if (g_rpc_send != NULL) {
-        (void)g_rpc_send(job->envelope_id, SLIVER_MSG_EXECUTE_REQ, msg.data, msg.len);
+        int src = g_rpc_send(job->envelope_id, SLIVER_MSG_EXECUTE_REQ, msg.data, msg.len);
+        LOG_DEBUG("exec: response send -> %d (%u bytes)", src, (unsigned)msg.len);
       }
     }
   }
@@ -1217,6 +1220,7 @@ void sliver_rpc_dispatch(const sliver_envelope_t *req, sliver_rpc_result_t *resu
     return;
   }
 }
+
 
 
 

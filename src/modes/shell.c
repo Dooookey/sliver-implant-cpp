@@ -247,6 +247,11 @@ static void shell_reader_thread(void *arg) {
   if (!t->stop) {
     (void)send_tunnel_close(t);
   }
+  /* Kill the child when the reader ends: a shell left behind after `exit` kept a
+   * powershell.exe alive in the process list. */
+  if (child != NULL) {
+    sliver_child_terminate(child);
+  }
   /* The reader owns the child object while it runs: it is the only thread that
    * may free it (see tunnel_release). */
   shell_lock();
@@ -425,6 +430,7 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return 0;
 }
+
 
 
 
