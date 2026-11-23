@@ -98,6 +98,10 @@ static int send_frame(sliver_yamux_t *y, uint8_t type, uint16_t flags, uint32_t 
   if (rc == 0 && length != 0 && payload != NULL) {
     rc = io_write_full(y, payload, length);
   }
+  if (rc != 0) {
+    LOG_ERROR("yamux: io_write_full failed (type %u, stream %u, len %u)", type, stream_id,
+              length);
+  }
   if (y->write_lock != NULL) {
     sliver_mutex_unlock(y->write_lock);
   }
@@ -482,6 +486,8 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
       chunk = s->send_window;
     }
     if (send_frame(y, YAMUX_TYPE_DATA, 0, stream_id, p + sent, (uint32_t)chunk) != 0) {
+      LOG_ERROR("yamux: send_frame DATA failed (stream %u, chunk %u)", stream_id,
+                (unsigned)chunk);
       y->failed = 1;
       if (y->streams_lock != NULL) {
         sliver_mutex_unlock(y->streams_lock);

@@ -88,6 +88,8 @@ static int send_envelope(session_tx_t *tx, const void *envelope, size_t len) {
   rc = sliver_frame_write(tx->signer, stream_write, &stream, envelope, len);
   if (rc != 0) {
     LOG_ERROR("session: frame write failed (stream %u, %u bytes)", sid, (unsigned)len);
+  } else {
+    LOG_DEBUG("session: sent envelope on stream %u (%u bytes)", sid, (unsigned)len);
   }
   (void)sliver_yamux_close_write(tx->y, sid);
   if (tx->tx_lock != NULL) {

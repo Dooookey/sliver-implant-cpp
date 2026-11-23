@@ -143,6 +143,9 @@ static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int
     return -1;
   }
   rc = g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
+  LOG_DEBUG("shell: send_tunnel_data id=%llu seq=%llu ack=%llu len=%u rc=%d",
+            (unsigned long long)t->id, (unsigned long long)t->sequence,
+            (unsigned long long)t->read_sequence, (unsigned)len, rc);
   sliver_buf_free(&msg);
   if (rc == 0) {
     t->sequence++;
