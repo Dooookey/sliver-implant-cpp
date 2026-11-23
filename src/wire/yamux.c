@@ -63,9 +63,10 @@ static int io_write_full(sliver_yamux_t *y, const void *buf, size_t len) {
   while (sent < len) {
     long n = y->write_fn(y->ctx, (const uint8_t *)buf + sent, len - sent);
     if (n == -2) {
-      /* Transient WANT_READ: retry the same bytes, but bounded - an unbounded
-       * spin here used to hold the send lock forever and froze the session. */
-      if (++retries > 200) {
+      /* Transient WANT_READ/WANT_WRITE: retry the same bytes. The 5 s bound matches
+       * the socket send timeout; a peer that is momentarily not reading (or an
+       * mbedTLS post-handshake read) clears within this window. */
+      if (++retries > 5000) {
         return -1;
       }
       sliver_sleep_ms(1);
