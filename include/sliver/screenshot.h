@@ -5,7 +5,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Captures the desktop into a JPEG buffer (caller frees *out). */
 int sliver_screenshot_capture(uint8_t **out, size_t *out_len);
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif /* SLIVER_SCREENSHOT_H */

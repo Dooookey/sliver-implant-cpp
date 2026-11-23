@@ -58,11 +58,6 @@ int sliver_fs_abspath(const char *path, char *buf, size_t cap);
 }
 #endif
 
-#endif /* SLIVER_FS_H */
-
-
-
-
 /* --- mounts -------------------------------------------------------------- */
 typedef struct {
   char volume_name[128];
@@ -78,3 +73,5 @@ typedef struct {
 int sliver_fs_mounts(sliver_mount_t *out, int max);
 int sliver_mount_encode(sliver_buf_t *out, const sliver_mount_t *mounts, int count,
                         const char *err);
+
+#endif /* SLIVER_FS_H */

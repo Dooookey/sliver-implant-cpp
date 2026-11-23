@@ -194,3 +194,19 @@ int sliver_proc_children(sliver_child_proc_t *out, int max) {
   (void)closedir(d);
   return count;
 }
+
+int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_cap,
+                         size_t *out_len) {
+  /* POSIX is UTF-8 native: copy as-is. */
+  if (in == NULL || out == NULL) {
+    return -1;
+  }
+  if (in_len > out_cap) {
+    return -1;
+  }
+  memcpy(out, in, in_len);
+  if (out_len != NULL) {
+    *out_len = in_len;
+  }
+  return 0;
+}

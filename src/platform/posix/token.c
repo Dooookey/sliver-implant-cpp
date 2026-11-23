@@ -5,3 +5,5 @@ int sliver_make_token(const char *u, const char *p, const char *d, uint32_t t) {
   return -1;
 }
 int sliver_get_system(void) { return -1; }
+
+unsigned long sliver_token_last_error(void) { return 0; }

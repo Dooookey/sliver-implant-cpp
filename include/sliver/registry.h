@@ -4,8 +4,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
-
 #include "sliver/proto.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Sliver's RegistryType enum. */
 #define SLIVER_REG_UNKNOWN 0u
@@ -59,7 +62,8 @@ int sliver_reg_read_hive(const char *root_hive, const char *requested_hive, uint
                          size_t *out_len);
 int sliver_reg_names_encode(sliver_buf_t *out, char (*names)[256], int count, const char *err);
 
+#ifdef __cplusplus
+}
 #endif
 
-
-
+#endif /* SLIVER_REGISTRY_H */

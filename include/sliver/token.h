@@ -4,6 +4,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int sliver_make_token(const char *username, const char *password, const char *domain,
                       uint32_t logon_type);
 int sliver_get_system(void);
@@ -11,4 +15,5 @@ int sliver_get_system(void);
 unsigned long sliver_token_last_error(void);
 
 #endif
+
 

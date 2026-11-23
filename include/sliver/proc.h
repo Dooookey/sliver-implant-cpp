@@ -66,10 +66,6 @@ unsigned long sliver_child_last_error(void);
 }
 #endif
 
-#endif /* SLIVER_PROC_H */
-
-
-
 /* --- network interfaces (ifconfig) -------------------------------------- */
 typedef struct {
   int index;
@@ -117,4 +113,6 @@ int sliver_proc_children(sliver_child_proc_t *out, int max);
 /* ExecuteChildren{Children=1 repeated ExecuteChild{Pid,Path}}. */
 int sliver_execute_children_encode(sliver_buf_t *out, const sliver_child_proc_t *children,
                                    int count, const char *err);
+
+#endif /* SLIVER_PROC_H */
 

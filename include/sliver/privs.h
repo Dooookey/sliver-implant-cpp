@@ -3,8 +3,11 @@
 #define SLIVER_PRIVS_H
 
 #include <stddef.h>
-
 #include "sliver/proto.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct {
   char name[128];
@@ -22,5 +25,8 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
 int sliver_getprivs_encode(sliver_buf_t *out, const sliver_priv_t *privs, int count,
                            const char *integrity, const char *process_name, const char *err);
 
+#ifdef __cplusplus
+}
 #endif
 
+#endif /* SLIVER_PRIVS_H */
