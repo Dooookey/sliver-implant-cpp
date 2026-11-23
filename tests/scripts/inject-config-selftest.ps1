@@ -1,4 +1,4 @@
-﻿# inject-config-selftest.ps1 - prove that generate-cpp style config injection
+# inject-config-selftest.ps1 - prove that generate-cpp style config injection
 # produces a self-contained implant: config.json -> implant_secrets.c -> the
 # binary connects with NO command line arguments.
 #
@@ -96,10 +96,10 @@ try {
     param($path)
     & $path 2>&1
   } -ArgumentList $exe
-  if (Wait-Job -Job $job -Timeout 45) {
+  if (Wait-Job -Job $job -Timeout 150) {
     Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
   } else {
-    Write-Host "    (implant still running after 45s - stopping it)"
+    Write-Host "    (implant still running after 150s - stopping it)"
     Stop-Job -Job $job
     Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
   }

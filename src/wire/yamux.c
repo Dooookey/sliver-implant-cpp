@@ -184,6 +184,7 @@ int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
    * swallow server requests. */
   y->next_stream_id = 1;
   y->write_lock = sliver_mutex_create();
+  y->pump_lock = sliver_mutex_create();
   return 0;
 }
 
@@ -197,6 +198,10 @@ void sliver_yamux_free(sliver_yamux_t *y) {
   if (y->write_lock != NULL) {
     sliver_mutex_destroy(y->write_lock);
     y->write_lock = NULL;
+  }
+  if (y->pump_lock != NULL) {
+    sliver_mutex_destroy(y->pump_lock);
+    y->pump_lock = NULL;
   }
 }
 
@@ -235,7 +240,24 @@ static int replenish(sliver_yamux_t *y, uint32_t id, uint32_t consumed) {
   return send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, 0, id, NULL, consumed);
 }
 
+static int yamux_pump_locked(sliver_yamux_t *y);
+
 int sliver_yamux_pump(sliver_yamux_t *y) {
+  int rc;
+  if (y == NULL) {
+    return -1;
+  }
+  if (y->pump_lock != NULL) {
+    sliver_mutex_lock(y->pump_lock);
+  }
+  rc = yamux_pump_locked(y);
+  if (y->pump_lock != NULL) {
+    sliver_mutex_unlock(y->pump_lock);
+  }
+  return rc;
+}
+
+static int yamux_pump_locked(sliver_yamux_t *y) {
   uint8_t header[12];
   uint8_t type;
   uint16_t flags;
@@ -501,6 +523,9 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
     }
   }
 }
+
+
+
 
 
 

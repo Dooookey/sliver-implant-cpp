@@ -56,6 +56,9 @@ typedef struct {
   /* Serialises frame writes: open/write/close and the pump (ACK/window updates)
    * run on different threads, and interleaved headers corrupt the stream. */
   sliver_mutex_t *write_lock;
+  /* Only one thread may read frames: pump() is called from the session thread and
+   * from worker threads that need a window update. Two readers split a header. */
+  sliver_mutex_t *pump_lock;
 } sliver_yamux_t;
 
 int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
@@ -84,6 +87,7 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id);
 #endif
 
 #endif /* SLIVER_YAMUX_H */
+
 
 
 

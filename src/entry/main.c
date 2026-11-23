@@ -614,6 +614,42 @@ static int run_services_selftest(void) {
 }
 #endif
 
+#if defined(_WIN32)
+static int run_privs_selftest(void);
+static int run_screenshot_selftest(void);
+static int run_registry_selftest(void);
+static int run_services_selftest(void);
+static int run_token_selftest(void);
+static int run_netstat_selftest(void);
+static int run_mount_selftest(void);
+static int run_ifconfig_selftest(void);
+#endif
+static int run_exec_selftest(void);
+static int run_grep_selftest(void);
+static int run_children_selftest(void);
+static int run_fs_selftest(void);
+static int run_spawn_selftest(void);
+static int run_exec_selftest(void) {
+  const char *argv[3];
+  sliver_buf_t out;
+  sliver_buf_t err;
+  uint32_t pid = 0;
+  uint32_t status = 0;
+  int rc;
+
+  argv[0] = "-Command";
+  argv[1] = "Start-Sleep 1; Write-Output exec-ok";
+  argv[2] = NULL;
+  sliver_buf_init(&out);
+  sliver_buf_init(&err);
+  rc = sliver_proc_exec("powershell.exe", argv, 2, 1, &out, &err, &pid, &status);
+  LOG_INFO("exec selftest: rc=%d pid=%u status=%u out=%u bytes", rc, pid, status,
+           (unsigned)out.len);
+  sliver_buf_free(&out);
+  sliver_buf_free(&err);
+  return rc == 0 ? 0 : 1;
+}
+
 static int run_selftest_all(void) {
   int failures = 0;
   LOG_INFO("selftest-all: start");
@@ -941,6 +977,11 @@ int sliver_cli_main(int argc, char **argv) {
     sliver_plat_cleanup();
     return rc;
   }
+  if (argc > 1 && strcmp(argv[1], "--exec-selftest") == 0) {
+    int rc = run_exec_selftest();
+    sliver_plat_cleanup();
+    return rc;
+  }
   if (argc > 1 && strcmp(argv[1], "--dll-selftest") == 0) {
     int rc = run_dll_selftest();
     sliver_plat_cleanup();
@@ -1076,6 +1117,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   }
 }
 #endif
+
+
 
 
 
