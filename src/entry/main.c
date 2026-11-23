@@ -142,6 +142,7 @@ static char *read_file(const char *path) {
  * Performs a real TLS 1.3 mutual-auth handshake, writes the yamux preface and
  * echoes one line, then prints the negotiated parameters. This is the target to
  * single-step in VS2022 (breakpoints in src/transport/tls_client.c). */
+#if defined(IMPLANT_CRYPTO_ENABLED)
 static int run_tls_selftest(int argc, char **argv) {
   const char *host, *ca_path, *cert_path, *key_path;
   uint16_t port;
@@ -528,6 +529,7 @@ static int run_from_build_config(const char *argv0) {
     }
   }
 }
+#endif /* IMPLANT_CRYPTO_ENABLED */
 
 static int run_spawn_selftest(void) {
   const char *argv[2];
@@ -940,7 +942,11 @@ int sliver_cli_main(int argc, char **argv) {
       LOG_INFO("no CA certificate\n");
     } else {
       char check[192];
+#if defined(IMPLANT_CRYPTO_ENABLED)
       (void)sliver_tls_check_cert(ca, check, sizeof(check));
+#else
+      (void)snprintf(check, sizeof(check), "%s", "crypto disabled");
+#endif
       LOG_INFO("--- ca begin (len=%u) ---\n%s\n--- ca end ---\n", (unsigned)strlen(ca), ca);
       LOG_INFO("parse: %s\n", check);
     }
@@ -1046,6 +1052,7 @@ int sliver_cli_main(int argc, char **argv) {
     sliver_plat_cleanup();
     return rc;
   }
+#if defined(IMPLANT_CRYPTO_ENABLED)
   if (argc > 1 && strcmp(argv[1], "--tls-selftest") == 0) {
     int rc = run_tls_selftest(argc, argv);
     sliver_plat_cleanup();
@@ -1057,6 +1064,8 @@ int sliver_cli_main(int argc, char **argv) {
     return rc;
   }
 #endif
+#endif
+#if defined(IMPLANT_CRYPTO_ENABLED)
   if (argc > 1 && strcmp(argv[1], "--mtls") == 0) {
     int rc = run_mtls_session(argc, argv);
     sliver_plat_cleanup();
@@ -1071,6 +1080,11 @@ int sliver_cli_main(int argc, char **argv) {
      * like a successful run (returning 0 broke exit-code based health checks). */
     return rc < 0 ? 3 : rc;
   }
+#else
+  LOG_ERROR("crypto disabled build: no C2 transport is available");
+  sliver_plat_cleanup();
+  return 3;
+#endif
 
   print_banner();
   print_config();
