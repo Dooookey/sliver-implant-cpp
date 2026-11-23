@@ -41,6 +41,29 @@ void sliver_tls_close(sliver_tls_t *conn);
  * --dump-ca diagnostic to show whether an injected blob is usable. */
 int sliver_tls_check_cert(const char *pem, char *err, size_t err_len);
 
+/* --- transport abstraction -------------------------------------------------
+ * The session layer talks to this vtable instead of TLS directly, so HTTP/DNS/
+ * WireGuard transports can be added behind the same interface. The first (and
+ * currently only) implementation is mTLS. */
+typedef struct sliver_transport sliver_transport_t;
+struct sliver_transport {
+  long (*read)(sliver_transport_t *t, void *buf, size_t len);
+  long (*write)(sliver_transport_t *t, const void *buf, size_t len);
+  void (*close)(sliver_transport_t *t);
+  const char *(*version)(sliver_transport_t *t);
+  const char *(*ciphersuite)(sliver_transport_t *t);
+  void *state;
+};
+
+/* Establishes a transport to host:port. On success *out is set and 0 returned;
+ * on failure -1 is returned and err (when non-NULL) receives a reason. The only
+ * scheme supported is mtls:// (handled via the TLS client). */
+int sliver_transport_connect(sliver_transport_t **out, const char *host, uint16_t port,
+                             const char *ca_pem, const char *cert_pem, const char *key_pem,
+                             char *err, size_t err_len);
+/* Closes and frees a transport returned by sliver_transport_connect. */
+void sliver_transport_free(sliver_transport_t *t);
+
 #ifdef __cplusplus
 }
 #endif

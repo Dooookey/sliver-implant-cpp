@@ -133,6 +133,7 @@ set(SLIVER_CORE_SOURCES
 if(IMPLANT_CRYPTO)
   list(APPEND SLIVER_CORE_SOURCES
     src/transport/tls_client.c
+    src/transport/transport.c
     src/wire/frame.c
     src/wire/yamux.c
     src/modes/session.c
