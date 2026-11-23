@@ -117,6 +117,7 @@ set(SLIVER_CORE_SOURCES
   src/core/config.c
   src/core/log.c
   src/core/fileio.c
+  src/proto/proto.c
   src/platform/${SLIVER_PLATFORM_DIR}/thread.c
   src/platform/${SLIVER_PLATFORM_DIR}/net.c
   src/platform/${SLIVER_PLATFORM_DIR}/fs.c
@@ -132,7 +133,6 @@ set(SLIVER_CORE_SOURCES
 if(IMPLANT_CRYPTO)
   list(APPEND SLIVER_CORE_SOURCES
     src/transport/tls_client.c
-    src/proto/proto.c
     src/wire/frame.c
     src/wire/yamux.c
     src/modes/session.c
