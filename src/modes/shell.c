@@ -33,6 +33,7 @@ typedef struct {
   sliver_child_t *child;
   uint64_t sequence;
   uint64_t read_sequence;
+  sliver_mutex_t *seq_lock; /* guards sequence/read_sequence across reader + session */
   volatile int stop;
   int thread_running;
   int closing;
@@ -79,6 +80,7 @@ static shell_tunnel_t *tunnel_alloc(uint64_t id, sliver_child_t *child) {
       g_tunnels[i].id = id;
       g_tunnels[i].child = child;
       g_tunnels[i].sequence = 0;
+      g_tunnels[i].seq_lock = sliver_mutex_create();
       shell_unlock();
       return &g_tunnels[i];
     }
@@ -131,24 +133,40 @@ void sliver_shell_shutdown(void) {
  * the peer drop the next real frame as a duplicate). */
 static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int closed) {
   sliver_buf_t msg;
+  uint64_t seq;
+  uint64_t ack;
   int rc;
 
   (void)closed; /* closing goes through MsgTunnelClose, never a data frame */
   if (g_send == NULL) {
     return -1;
   }
+  if (t->seq_lock != NULL) {
+    sliver_mutex_lock(t->seq_lock);
+  }
+  seq = t->sequence;
+  ack = t->read_sequence;
+  if (t->seq_lock != NULL) {
+    sliver_mutex_unlock(t->seq_lock);
+  }
   sliver_buf_init(&msg);
-  if (sliver_tunnel_data_encode(&msg, data, len, 0, t->sequence, t->id, t->read_sequence) != 0) {
+  if (sliver_tunnel_data_encode(&msg, data, len, 0, seq, t->id, ack) != 0) {
     sliver_buf_free(&msg);
     return -1;
   }
   rc = g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
   LOG_DEBUG("shell: send_tunnel_data id=%llu seq=%llu ack=%llu len=%u rc=%d",
-            (unsigned long long)t->id, (unsigned long long)t->sequence,
-            (unsigned long long)t->read_sequence, (unsigned)len, rc);
+            (unsigned long long)t->id, (unsigned long long)seq, (unsigned long long)ack,
+            (unsigned)len, rc);
   sliver_buf_free(&msg);
   if (rc == 0) {
+    if (t->seq_lock != NULL) {
+      sliver_mutex_lock(t->seq_lock);
+    }
     t->sequence++;
+    if (t->seq_lock != NULL) {
+      sliver_mutex_unlock(t->seq_lock);
+    }
   }
   return rc;
 }
@@ -156,13 +174,21 @@ static int send_tunnel_data(shell_tunnel_t *t, const void *data, size_t len, int
 /* Terminal: MsgTunnelClose{TunnelData{Closed, Sequence = exclusive prefix}}. */
 static int send_tunnel_close(shell_tunnel_t *t) {
   sliver_buf_t msg;
+  uint64_t seq;
   int rc;
 
   if (g_send == NULL) {
     return -1;
   }
+  if (t->seq_lock != NULL) {
+    sliver_mutex_lock(t->seq_lock);
+  }
+  seq = t->sequence;
+  if (t->seq_lock != NULL) {
+    sliver_mutex_unlock(t->seq_lock);
+  }
   sliver_buf_init(&msg);
-  if (sliver_tunnel_close_encode(&msg, t->sequence, t->id) != 0) {
+  if (sliver_tunnel_close_encode(&msg, seq, t->id) != 0) {
     sliver_buf_free(&msg);
     return -1;
   }
@@ -174,13 +200,23 @@ static int send_tunnel_close(shell_tunnel_t *t) {
 /* Gap recovery: ask the peer to resend from read_sequence (control frame). */
 static int send_tunnel_resend(shell_tunnel_t *t) {
   sliver_buf_t msg;
+  uint64_t seq;
+  uint64_t ack;
   int rc;
 
   if (g_send == NULL) {
     return -1;
   }
+  if (t->seq_lock != NULL) {
+    sliver_mutex_lock(t->seq_lock);
+  }
+  seq = t->sequence;
+  ack = t->read_sequence;
+  if (t->seq_lock != NULL) {
+    sliver_mutex_unlock(t->seq_lock);
+  }
   sliver_buf_init(&msg);
-  if (sliver_tunnel_resend_encode(&msg, t->sequence, t->id, t->read_sequence) != 0) {
+  if (sliver_tunnel_resend_encode(&msg, seq, t->id, ack) != 0) {
     sliver_buf_free(&msg);
     return -1;
   }
@@ -263,6 +299,10 @@ static void shell_reader_thread(void *arg) {
   }
   t->child = NULL;
   t->thread_running = 0;
+  if (t->seq_lock != NULL) {
+    sliver_mutex_destroy(t->seq_lock);
+    t->seq_lock = NULL;
+  }
   memset(t, 0, sizeof(*t));
   shell_unlock();
   free(r);
@@ -397,19 +437,46 @@ int sliver_rpc_handle_tunnel_data(const sliver_envelope_t *req, sliver_buf_t *ou
      * for them used to steal a portfwd slot and leave a sequence gap. */
     return -2;
   }
-  if (td.sequence == t->read_sequence) {
-    if (td.data_len != 0) {
+  {
+    uint64_t want;
+    int do_write = 0;
+    int do_close = 0;
+    int is_gap = 0;
+
+    if (t->seq_lock != NULL) {
+      sliver_mutex_lock(t->seq_lock);
+    }
+    want = t->read_sequence;
+    if (td.sequence == want) {
+      do_write = td.data_len != 0;
+      do_close = td.closed != 0;
+    } else if (td.sequence > want) {
+      is_gap = 1;
+    }
+    if (t->seq_lock != NULL) {
+      sliver_mutex_unlock(t->seq_lock);
+    }
+
+    if (do_write) {
       (void)sliver_child_write(t->child, td.data, td.data_len);
     }
-    if (td.closed) {
+    if (do_close) {
       sliver_child_close_stdin(t->child);
     }
-    t->read_sequence++;
-  } else if (td.sequence > t->read_sequence) {
-    /* Gap: ask for the missing frames instead of going silent forever. */
-    LOG_DEBUG("tunnel: gap on id=%llu (want %llu got %llu)", (unsigned long long)t->id,
-              (unsigned long long)t->read_sequence, (unsigned long long)td.sequence);
-    (void)send_tunnel_resend(t);
+    if (do_write || do_close) {
+      if (t->seq_lock != NULL) {
+        sliver_mutex_lock(t->seq_lock);
+      }
+      t->read_sequence++;
+      if (t->seq_lock != NULL) {
+        sliver_mutex_unlock(t->seq_lock);
+      }
+    }
+    if (is_gap) {
+      LOG_DEBUG("tunnel: gap on id=%llu (want %llu got %llu)", (unsigned long long)t->id,
+                (unsigned long long)want, (unsigned long long)td.sequence);
+      (void)send_tunnel_resend(t);
+    }
   }
   return -2;
 }
