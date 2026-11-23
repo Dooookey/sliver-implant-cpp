@@ -1,6 +1,7 @@
 /* src/wire/yamux.c - minimal client side of hashicorp/yamux. */
 #include "sliver/yamux.h"
 
+#include "sliver/log.h"
 #include "sliver/platform.h"
 
 #include <stdlib.h>
@@ -185,6 +186,7 @@ int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
   y->next_stream_id = 1;
   y->write_lock = sliver_mutex_create();
   y->pump_lock = sliver_mutex_create();
+  y->streams_lock = sliver_mutex_create();
   return 0;
 }
 
@@ -203,6 +205,10 @@ void sliver_yamux_free(sliver_yamux_t *y) {
     sliver_mutex_destroy(y->pump_lock);
     y->pump_lock = NULL;
   }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_destroy(y->streams_lock);
+    y->streams_lock = NULL;
+  }
 }
 
 int sliver_yamux_open(sliver_yamux_t *y, uint32_t *stream_id) {
@@ -210,6 +216,9 @@ int sliver_yamux_open(sliver_yamux_t *y, uint32_t *stream_id) {
   sliver_yamux_stream_t *s;
   if (y == NULL || y->failed) {
     return -1;
+  }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_lock(y->streams_lock);
   }
   id = y->next_stream_id;
   y->next_stream_id += 2;
@@ -222,16 +231,25 @@ int sliver_yamux_open(sliver_yamux_t *y, uint32_t *stream_id) {
   }
   s = alloc_stream(y, id);
   if (s == NULL) {
+    if (y->streams_lock != NULL) {
+      sliver_mutex_unlock(y->streams_lock);
+    }
     return -1;
   }
   /* SYN window update carries the initial window size. */
   if (send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_SYN, id, NULL,
                  SLIVER_YAMUX_INITIAL_WINDOW) != 0) {
     y->failed = 1;
+    if (y->streams_lock != NULL) {
+      sliver_mutex_unlock(y->streams_lock);
+    }
     return -1;
   }
   if (stream_id != NULL) {
     *stream_id = id;
+  }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_unlock(y->streams_lock);
   }
   return 0;
 }
@@ -250,7 +268,13 @@ int sliver_yamux_pump(sliver_yamux_t *y) {
   if (y->pump_lock != NULL) {
     sliver_mutex_lock(y->pump_lock);
   }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_lock(y->streams_lock);
+  }
   rc = yamux_pump_locked(y);
+  if (y->streams_lock != NULL) {
+    sliver_mutex_unlock(y->streams_lock);
+  }
   if (y->pump_lock != NULL) {
     sliver_mutex_unlock(y->pump_lock);
   }
@@ -411,21 +435,42 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
   if (y == NULL || y->failed || (buf == NULL && len != 0)) {
     return -1;
   }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_lock(y->streams_lock);
+  }
   s = find_stream(y, stream_id);
   if (s == NULL) {
+    LOG_ERROR("yamux: write to unknown stream %u (%u bytes)", stream_id, (unsigned)len);
+    if (y->streams_lock != NULL) {
+      sliver_mutex_unlock(y->streams_lock);
+    }
     return -1;
   }
   while (sent < len) {
     size_t chunk;
     if (s->send_window == 0) {
-      int prc = sliver_yamux_pump(y);
-      if (prc < 0) {
-        return -1;
+      /* Release streams_lock before pumping: pump takes pump_lock -> streams_lock. */
+      if (y->streams_lock != NULL) {
+        sliver_mutex_unlock(y->streams_lock);
       }
-      /* prc == 1 means "no frame available yet" (TLS recv timeout), not an error;
-       * retrying here is how a multi-frame response drains the window. */
-      if (prc == 1) {
-        sliver_sleep_ms(1);
+      {
+        int prc = sliver_yamux_pump(y);
+        if (prc < 0) {
+          return -1;
+        }
+        if (prc == 1) {
+          sliver_sleep_ms(1);
+        }
+      }
+      if (y->streams_lock != NULL) {
+        sliver_mutex_lock(y->streams_lock);
+      }
+      s = find_stream(y, stream_id);
+      if (s == NULL) {
+        if (y->streams_lock != NULL) {
+          sliver_mutex_unlock(y->streams_lock);
+        }
+        return -1;
       }
       continue;
     }
@@ -438,65 +483,102 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
     }
     if (send_frame(y, YAMUX_TYPE_DATA, 0, stream_id, p + sent, (uint32_t)chunk) != 0) {
       y->failed = 1;
+      if (y->streams_lock != NULL) {
+        sliver_mutex_unlock(y->streams_lock);
+      }
       return -1;
     }
     s->send_window -= (uint32_t)chunk;
     sent += chunk;
+  }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_unlock(y->streams_lock);
   }
   return 0;
 }
 
 int sliver_yamux_close_write(sliver_yamux_t *y, uint32_t stream_id) {
   sliver_yamux_stream_t *s;
+  int rc = 0;
 
   if (y == NULL || y->failed) {
     return -1;
   }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_lock(y->streams_lock);
+  }
   s = find_stream(y, stream_id);
   if (s == NULL) {
-    return 0; /* already released - nothing to half-close */
-  }
-  if (s->closed_write) {
+    /* already released - nothing to half-close */
+    if (y->streams_lock != NULL) {
+      sliver_mutex_unlock(y->streams_lock);
+    }
     return 0;
   }
-  if (send_frame(y, YAMUX_TYPE_DATA, YAMUX_FLAG_FIN, stream_id, NULL, 0) != 0) {
-    y->failed = 1;
-    return -1;
+  if (!s->closed_write) {
+    if (send_frame(y, YAMUX_TYPE_DATA, YAMUX_FLAG_FIN, stream_id, NULL, 0) != 0) {
+      y->failed = 1;
+      rc = -1;
+    } else {
+      s->closed_write = 1;
+      maybe_release(s);
+    }
   }
-  s->closed_write = 1;
-  maybe_release(s);
-  return 0;
+  if (y->streams_lock != NULL) {
+    sliver_mutex_unlock(y->streams_lock);
+  }
+  return rc;
 }
 
 void sliver_yamux_forget(sliver_yamux_t *y, uint32_t stream_id) {
   if (y == NULL) {
     return;
   }
+  if (y->streams_lock != NULL) {
+    sliver_mutex_lock(y->streams_lock);
+  }
   release_stream(find_stream(y, stream_id));
+  if (y->streams_lock != NULL) {
+    sliver_mutex_unlock(y->streams_lock);
+  }
 }
 
 int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
   if (y == NULL || stream_id == NULL) {
     return -1;
   }
-  while (!y->pending_valid) {
-    int rc;
+  for (;;) {
     if (y->failed || y->go_away) {
       return -1;
     }
-    rc = sliver_yamux_pump(y);
-    if (rc < 0) {
-      return -1;
+    {
+      int have = 0;
+      if (y->streams_lock != NULL) {
+        sliver_mutex_lock(y->streams_lock);
+      }
+      have = y->pending_valid;
+      if (have) {
+        *stream_id = y->pending_accept;
+        y->pending_accept = 0;
+        y->pending_valid = 0;
+      }
+      if (y->streams_lock != NULL) {
+        sliver_mutex_unlock(y->streams_lock);
+      }
+      if (have) {
+        return 0;
+      }
     }
-    if (rc == 1) {
-      sliver_sleep_ms(2); /* no data yet: do not spin the CPU */
+    {
+      int rc = sliver_yamux_pump(y);
+      if (rc < 0) {
+        return -1;
+      }
+      if (rc == 1) {
+        sliver_sleep_ms(2); /* no data yet: do not spin the CPU */
+      }
     }
-    /* rc == 1: no frame yet (TLS receive timeout), keep waiting. */
   }
-  *stream_id = y->pending_accept;
-  y->pending_accept = 0;
-  y->pending_valid = 0;
-  return 0;
 }
 
 long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t len) {
@@ -506,29 +588,44 @@ long sliver_yamux_read(sliver_yamux_t *y, uint32_t stream_id, void *buf, size_t 
   if (y == NULL || buf == NULL || len == 0) {
     return -1;
   }
-  s = find_stream(y, stream_id);
-  if (s == NULL) {
-    return -1;
-  }
   for (;;) {
+    int prc;
+    if (y->streams_lock != NULL) {
+      sliver_mutex_lock(y->streams_lock);
+    }
+    s = find_stream(y, stream_id);
+    if (s == NULL) {
+      if (y->streams_lock != NULL) {
+        sliver_mutex_unlock(y->streams_lock);
+      }
+      return -1;
+    }
     available = s->in.len - s->in_off;
     if (available > 0) {
       size_t n = available < len ? available : len;
       memcpy(buf, s->in.data + s->in_off, n);
       s->in_off += n;
+      if (y->streams_lock != NULL) {
+        sliver_mutex_unlock(y->streams_lock);
+      }
       return (long)n;
     }
     if (s->fin_received) {
+      if (y->streams_lock != NULL) {
+        sliver_mutex_unlock(y->streams_lock);
+      }
       return 0;
     }
-    {
-      int prc = sliver_yamux_pump(y);
-      if (prc < 0) {
-        return -1;
-      }
+    if (y->streams_lock != NULL) {
+      sliver_mutex_unlock(y->streams_lock);
+    }
+    prc = sliver_yamux_pump(y);
+    if (prc < 0) {
+      return -1;
     }
   }
 }
+
 
 
 

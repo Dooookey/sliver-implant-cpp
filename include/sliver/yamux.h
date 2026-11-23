@@ -59,6 +59,9 @@ typedef struct {
   /* Only one thread may read frames: pump() is called from the session thread and
    * from worker threads that need a window update. Two readers split a header. */
   sliver_mutex_t *pump_lock;
+  /* Guards the streams[] table and every per-stream flag/field. Order:
+   * tx_lock -> pump_lock -> streams_lock -> write_lock. */
+  sliver_mutex_t *streams_lock;
 } sliver_yamux_t;
 
 int sliver_yamux_client(sliver_yamux_t *y, sliver_io_read_fn read_fn,
@@ -87,6 +90,7 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id);
 #endif
 
 #endif /* SLIVER_YAMUX_H */
+
 
 
 
