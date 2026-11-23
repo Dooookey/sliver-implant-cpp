@@ -64,27 +64,6 @@ static portfwd_t *forward_find(uint64_t id) {
   return NULL;
 }
 
-/* Reclaims a slot whose owner thread is gone; bind-only entries used to leak
- * forever, so 8 reconnects disabled portfwd completely. */
-static portfwd_t *forward_slot(void) {
-  for (size_t i = 0; i < SLIVER_MAX_PORTFWDS; ++i) {
-    if (!g_forwards[i].used) {
-      return &g_forwards[i];
-    }
-    if (g_forwards[i].closing && !g_forwards[i].thread_running) {
-      if (g_forwards[i].sock != NULL) {
-        sliver_socket_close(g_forwards[i].sock);
-      }
-      if (g_forwards[i].lock != NULL) {
-        sliver_mutex_destroy(g_forwards[i].lock);
-      }
-      memset(&g_forwards[i], 0, sizeof(g_forwards[i]));
-      return &g_forwards[i];
-    }
-  }
-  return NULL;
-}
-
 /* Releases a forward. While its relay thread still runs the thread owns the
  * socket/lock: destroying them here would leave it blocking on a freed mutex. */
 static void forward_release(portfwd_t *f) {
@@ -94,9 +73,11 @@ static void forward_release(portfwd_t *f) {
   f->stop = 1;
   portfwd_lock();
   if (f->thread_running) {
-    /* The relay thread owns the socket: only flag it. Closing here freed the
-     * pointer the thread was still using (double free on exit). */
     f->closing = 1;
+    if (f->sock != NULL) {
+      sliver_socket_close(f->sock);
+      f->sock = NULL;
+    }
     portfwd_unlock();
     return;
   }
@@ -214,23 +195,22 @@ static void forward_thread(void *arg) {
 int sliver_portfwd_bind(uint64_t id) {
   portfwd_t *f;
 
-  portfwd_lock();
-  f = forward_find(id);
-  if (f != NULL) {
-    portfwd_unlock();
+  if (forward_find(id) != NULL) {
     return 1;
   }
-  f = forward_slot();
-  if (f == NULL) {
-    portfwd_unlock();
-    return 0;
+  for (size_t i = 0; i < SLIVER_MAX_PORTFWDS; ++i) {
+    if (!g_forwards[i].used) {
+      f = &g_forwards[i];
+      memset(f, 0, sizeof(*f));
+      f->used = 1;
+      f->id = id;
+      f->lock = sliver_mutex_create();
+      /* No reply here: the client binds the tunnel server-side with this frame;
+       * answering it confused the peer state machine (data never flowed). */
+      return 1;
+    }
   }
-  memset(f, 0, sizeof(*f));
-  f->used = 1;
-  f->id = id;
-  f->lock = sliver_mutex_create();
-  portfwd_unlock();
-  return 1;
+  return 0;
 }
 
 int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
@@ -405,9 +385,6 @@ int sliver_portfwd_tunnel_close(uint64_t tunnel_id) {
   forward_release(f);
   return 1;
 }
-
-
-
 
 
 

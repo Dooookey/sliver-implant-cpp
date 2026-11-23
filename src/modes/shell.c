@@ -73,15 +73,12 @@ static shell_tunnel_t *tunnel_find(uint64_t id) {
 static shell_tunnel_t *tunnel_alloc(uint64_t id, sliver_child_t *child) {
   shell_lock();
   for (size_t i = 0; i < SLIVER_MAX_TUNNELS; ++i) {
-    if (!g_tunnels[i].used ||
-        (g_tunnels[i].closing && !g_tunnels[i].thread_running)) {
-      if (g_tunnels[i].used && g_tunnels[i].child != NULL) {
-        sliver_child_free(g_tunnels[i].child);
-      }
+    if (!g_tunnels[i].used) {
       memset(&g_tunnels[i], 0, sizeof(g_tunnels[i]));
       g_tunnels[i].used = 1;
       g_tunnels[i].id = id;
       g_tunnels[i].child = child;
+      g_tunnels[i].sequence = 0;
       shell_unlock();
       return &g_tunnels[i];
     }
@@ -428,7 +425,6 @@ int sliver_rpc_handle_shell_resize(const sliver_envelope_t *req, sliver_buf_t *o
   (void)out;
   return 0;
 }
-
 
 
 
