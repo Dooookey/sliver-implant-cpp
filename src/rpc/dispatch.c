@@ -296,6 +296,8 @@ typedef struct {
   size_t argc;
   int output;
   int background;
+  char stdout_path[1024];
+  char stderr_path[1024];
   int64_t envelope_id;
 } exec_job_t;
 
@@ -340,6 +342,20 @@ static void execute_worker(void *arg) {
     }
     LOG_DEBUG("exec: child done status=%u out=%u err=%u, sending response", status,
               (unsigned)out_buf.len, (unsigned)err_buf.len);
+    /* `output` (redirect) writes captured output to the requested files and
+     * leaves the response's stdout/stderr empty, matching the Go implant. */
+    if (job->output) {
+      if (job->stdout_path[0] != '\0' && out_buf.len != 0) {
+        (void)sliver_fs_write_chunk(job->stdout_path, out_buf.data, out_buf.len, 1);
+        sliver_buf_free(&out_buf);
+        sliver_buf_init(&out_buf);
+      }
+      if (job->stderr_path[0] != '\0' && err_buf.len != 0) {
+        (void)sliver_fs_write_chunk(job->stderr_path, err_buf.data, err_buf.len, 1);
+        sliver_buf_free(&err_buf);
+        sliver_buf_init(&err_buf);
+      }
+    }
     sliver_buf_init(&msg);
     if (sliver_execute_encode(&msg, status, out_buf.data, out_buf.len, err_buf.data,
                               err_buf.len, pid, start_err) == 0) {
@@ -374,6 +390,8 @@ int sliver_rpc_execute_async(const sliver_envelope_t *req) {
   }
   job->output = ex.output;
   job->background = ex.background;
+  (void)snprintf(job->stdout_path, sizeof(job->stdout_path), "%s", ex.stdout_path);
+  (void)snprintf(job->stderr_path, sizeof(job->stderr_path), "%s", ex.stderr_path);
   job->envelope_id = req->id;
   thread = sliver_thread_create(execute_worker, job);
   if (thread == NULL) {

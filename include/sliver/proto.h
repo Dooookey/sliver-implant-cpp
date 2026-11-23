@@ -276,6 +276,9 @@ typedef struct {
   size_t argc;
   int output;
   int background;
+  char stdout_path[1024];
+  char stderr_path[1024];
+  int32_t ppid;
 } sliver_execute_req_t;
 
 /* ExecuteReq{Path=1,Args=2,Output=3,EnvInheritance=6,Background=8}. */

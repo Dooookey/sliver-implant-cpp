@@ -12,6 +12,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
+#include <tlhelp32.h>
 #include <tcpmib.h>
 
 struct sliver_socket {
@@ -211,20 +212,31 @@ int sliver_net_sockets(sliver_sock_t *out, int max) {
   DWORD size = 0;
   MIB_TCPTABLE_OWNER_PID *table;
   int count = 0;
+  HANDLE snap = INVALID_HANDLE_VALUE;
 
   if (out == NULL || max <= 0) {
     return -1;
   }
+  snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (GetExtendedTcpTable(NULL, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) !=
       ERROR_INSUFFICIENT_BUFFER) {
+    if (snap != INVALID_HANDLE_VALUE) {
+      (void)CloseHandle(snap);
+    }
     return -1;
   }
   table = (MIB_TCPTABLE_OWNER_PID *)malloc(size);
   if (table == NULL) {
+    if (snap != INVALID_HANDLE_VALUE) {
+      (void)CloseHandle(snap);
+    }
     return -1;
   }
   if (GetExtendedTcpTable(table, &size, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != NO_ERROR) {
     free(table);
+    if (snap != INVALID_HANDLE_VALUE) {
+      (void)CloseHandle(snap);
+    }
     return -1;
   }
   for (DWORD i = 0; i < table->dwNumEntries && count < max; ++i) {
@@ -238,10 +250,26 @@ int sliver_net_sockets(sliver_sock_t *out, int max) {
     (void)snprintf(e->state, sizeof(e->state), "%s", tcp_state_name(row->dwState));
     e->pid = (int32_t)row->dwOwningPid;
     (void)snprintf(e->proto, sizeof(e->proto), "%s", "tcp");
+    if (snap != INVALID_HANDLE_VALUE && e->pid > 0) {
+      PROCESSENTRY32 pe;
+      pe.dwSize = sizeof(pe);
+      if (Process32First(snap, &pe)) {
+        do {
+          if (pe.th32ProcessID == (DWORD)e->pid) {
+            (void)snprintf(e->exe, sizeof(e->exe), "%s", pe.szExeFile);
+            break;
+          }
+        } while (Process32Next(snap, &pe));
+      }
+    }
     count++;
   }
   free(table);
+  if (snap != INVALID_HANDLE_VALUE) {
+    (void)CloseHandle(snap);
+  }
   return count;
 }
+
 
 

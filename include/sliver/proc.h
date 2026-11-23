@@ -93,6 +93,7 @@ typedef struct {
   uint32_t uid;
   int32_t pid;
   char proto[8];
+  char exe[256];
 } sliver_sock_t;
 
 int sliver_net_sockets(sliver_sock_t *out, int max);
