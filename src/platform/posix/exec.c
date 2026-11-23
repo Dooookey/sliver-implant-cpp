@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -196,9 +197,15 @@ long sliver_child_read(sliver_child_t *c, void *buf, size_t len) {
 }
 
 void sliver_child_close_stdin(sliver_child_t *c) {
-  if (c != NULL && c->stdin_w >= 0) {
-    (void)close(c->stdin_w);
-    c->stdin_w = -1;
+  int fd;
+  if (c == NULL) {
+    return;
+  }
+  /* Two threads may reach this (tunnel close and the reader thread): exchange
+   * first so the descriptor is closed exactly once and never reused twice. */
+  fd = __atomic_exchange_n(&c->stdin_w, -1, __ATOMIC_ACQ_REL);
+  if (fd >= 0) {
+    (void)close(fd);
   }
 }
 

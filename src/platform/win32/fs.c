@@ -291,7 +291,10 @@ int sliver_fs_mounts(sliver_mount_t *out, int max) {
     (void)WideCharToMultiByte(CP_UTF8, 0, label_w, -1, m->label, (int)sizeof(m->label), NULL, NULL);
     (void)WideCharToMultiByte(CP_UTF8, 0, fs_w, -1, m->file_system,
                               (int)sizeof(m->file_system), NULL, NULL);
-    (void)snprintf(m->volume_type, sizeof(m->volume_type), "%s", "fixed");
+    /* Sliver's client maps the numeric GetDriveType value (0..6) to a label;
+     * the literal "fixed" was rendered as "Unknown" for every volume. */
+    (void)snprintf(m->volume_type, sizeof(m->volume_type), "%u",
+                   (unsigned)GetDriveTypeA(root));
     count++;
   }
   return count;

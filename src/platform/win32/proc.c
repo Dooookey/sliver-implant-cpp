@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -78,8 +79,8 @@ int sliver_proc_terminate(int32_t pid, int force) {
 }
 
 int sliver_env_list(sliver_env_t **out, size_t *count) {
-  char *block;
-  char *cursor;
+  WCHAR *block;
+  WCHAR *cursor;
   sliver_env_t *vars;
   size_t n = 0;
 
@@ -93,18 +94,21 @@ int sliver_env_list(sliver_env_t **out, size_t *count) {
   if (vars == NULL) {
     return -1;
   }
-  block = GetEnvironmentStringsA();
+  /* The W API: environment values are localised (GBK on Chinese Windows) and a
+   * protobuf `string` field must be valid UTF-8, otherwise the Go server rejects
+   * the whole message. */
+  block = GetEnvironmentStringsW();
   if (block == NULL) {
     free(vars);
     return -1;
   }
-  for (cursor = block; *cursor != '\0' && n < SLIVER_MAX_ENV; cursor += strlen(cursor) + 1) {
-    const char *eq;
+  for (cursor = block; *cursor != L'\0' && n < SLIVER_MAX_ENV; cursor += wcslen(cursor) + 1) {
+    const WCHAR *eq;
     size_t klen;
-    if (cursor[0] == '=') {
+    if (cursor[0] == L'=') {
       continue; /* hidden drive-current-directory variables */
     }
-    eq = strchr(cursor, '=');
+    eq = wcschr(cursor, L'=');
     if (eq == NULL) {
       continue;
     }
@@ -112,15 +116,62 @@ int sliver_env_list(sliver_env_t **out, size_t *count) {
     if (klen >= sizeof(vars[n].key)) {
       klen = sizeof(vars[n].key) - 1;
     }
-    memcpy(vars[n].key, cursor, klen);
-    vars[n].key[klen] = '\0';
-    (void)snprintf(vars[n].value, sizeof(vars[n].value), "%s", eq + 1);
+    if (WideCharToMultiByte(CP_UTF8, 0, cursor, (int)klen, vars[n].key, (int)sizeof(vars[n].key) - 1,
+                            NULL, NULL) <= 0) {
+      continue;
+    }
+    if (WideCharToMultiByte(CP_UTF8, 0, eq + 1, -1, vars[n].value, (int)sizeof(vars[n].value),
+                            NULL, NULL) <= 0) {
+      vars[n].value[0] = '\0';
+    }
     n++;
   }
-  (void)FreeEnvironmentStringsA(block);
+  (void)FreeEnvironmentStringsW(block);
   *out = vars;
   *count = n;
   return 0;
+}
+
+int sliver_utf8_from_acp(const char *in, char *out, size_t out_cap) {
+  int wide_total;
+  int wide_len;
+  WCHAR *wide;
+  int written;
+
+  if (in == NULL || out == NULL || out_cap == 0) {
+    return -1;
+  }
+  wide_total = MultiByteToWideChar(CP_ACP, 0, in, -1, NULL, 0);
+  if (wide_total <= 0) {
+    out[0] = '\0';
+    return 0;
+  }
+  wide = (WCHAR *)malloc(sizeof(WCHAR) * (size_t)wide_total);
+  if (wide == NULL) {
+    return -1;
+  }
+  if (MultiByteToWideChar(CP_ACP, 0, in, -1, wide, wide_total) != wide_total) {
+    free(wide);
+    return -1;
+  }
+  wide_len = wide_total - 1; /* characters, without the terminator */
+  /* Shrink the wide string until the UTF-8 form fits, so a truncation never
+   * splits a multi-byte sequence. */
+  for (;;) {
+    written = WideCharToMultiByte(CP_UTF8, 0, wide, wide_len, out, (int)(out_cap - 1), NULL,
+                                  NULL);
+    if (written > 0) {
+      out[written] = '\0';
+      free(wide);
+      return 0;
+    }
+    if (wide_len == 0) {
+      out[0] = '\0';
+      free(wide);
+      return 0;
+    }
+    wide_len--;
+  }
 }
 
 void sliver_env_free(sliver_env_t *vars) { free(vars); }

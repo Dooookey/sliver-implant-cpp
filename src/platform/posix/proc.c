@@ -91,7 +91,7 @@ int sliver_proc_list(sliver_proc_t **out, size_t *count) {
         (void)fclose(cf);
         for (size_t k = 0; k < got; ++k) {
           if (cmd[k] == 0) {
-            cmd[k] = (k + 1 < got) ? \' \' : 0;
+            cmd[k] = (k + 1 < got) ? ' ' : '\0';
           }
         }
         cmd[got] = 0;
@@ -208,5 +208,24 @@ int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_ca
   if (out_len != NULL) {
     *out_len = in_len;
   }
+  return 0;
+}
+
+int sliver_utf8_from_acp(const char *in, char *out, size_t out_cap) {
+  /* POSIX is UTF-8 native: copy as-is. */
+  size_t len;
+  if (in == NULL || out == NULL || out_cap == 0) {
+    return -1;
+  }
+  len = strlen(in);
+  if (len >= out_cap) {
+    len = out_cap - 1;
+    /* Do not split a UTF-8 sequence. */
+    while (len > 0 && ((unsigned char)in[len] & 0xC0) == 0x80) {
+      len--;
+    }
+  }
+  memcpy(out, in, len);
+  out[len] = '\0';
   return 0;
 }

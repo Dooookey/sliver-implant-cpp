@@ -22,8 +22,10 @@ typedef struct {
 } sliver_proc_t;
 
 typedef struct {
-  char key[192];
-  char value[512];
+  char key[256];
+  /* Long values (PATH and friends) are common; the Go implant sends them whole
+   * and protobuf-go rejects truncated-but-valid strings silently losing data. */
+  char value[4096];
 } sliver_env_t;
 
 /* Returns a malloc'd array (caller frees with sliver_proc_free). */
@@ -41,6 +43,12 @@ void sliver_env_free(sliver_env_t *vars);
  * when the input is not UTF-8 or does not fit. */
 int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_cap,
                          size_t *out_len);
+
+/* Converts the system ANSI code page into UTF-8. Protobuf `string` fields must
+ * be valid UTF-8 or the Go server rejects the whole message
+ * ("string field contains invalid UTF-8"), so every A-API string that reaches
+ * the wire goes through this. Truncates on a character boundary. */
+int sliver_utf8_from_acp(const char *in, char *out, size_t out_cap);
 
 /* Runs `path` with `args`, capturing stdout/stderr when capture != 0.
  * Blocks until the child exits (60s cap on Windows). */

@@ -44,10 +44,17 @@ sliver_socket_t *sliver_tcp_connect(const char *host, uint16_t port);
 /* Returns the number of bytes transferred, or -1 on error. */
 long sliver_socket_send(sliver_socket_t *s, const void *buf, size_t len);
 long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len);
+/* Shuts the connection down without freeing the socket object: a blocked
+ * reader/writer wakes up, but the owner of the object stays the only party that
+ * may call sliver_socket_close(). Used to stop relay threads safely. */
+void sliver_socket_shutdown(sliver_socket_t *s);
 void sliver_socket_close(sliver_socket_t *s);
 /* Makes blocking reads return -1 (EAGAIN/WSAETIMEDOUT) after `ms`, so the
  * reader can release its lock and let writers use the TLS context. */
 void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms);
+/* Bounds a blocking send so a stalled peer cannot pin a thread (and the lock it
+ * holds) forever. */
+void sliver_socket_set_send_timeout(sliver_socket_t *s, int ms);
 
 /* --- identity helpers --------------------------------------------------- */
 int sliver_hostname(char *buf, size_t cap);

@@ -760,7 +760,7 @@ int sliver_download_req_decode(const void *data, size_t len, sliver_download_req
 
 int sliver_download_encode(sliver_buf_t *out, const char *path, int exists, int64_t start,
                            int64_t stop, const void *data, size_t data_len, int is_dir,
-                           const char *err) {
+                           int read_files, const char *err) {
   if (out == NULL) {
     return -1;
   }
@@ -780,6 +780,9 @@ int sliver_download_encode(sliver_buf_t *out, const char *path, int exists, int6
     return -1;
   }
   if (is_dir && sliver_buf_put_bool(out, 7, 1) != 0) {
+    return -1;
+  }
+  if (read_files > 0 && sliver_buf_put_int32(out, 8, read_files) != 0) {
     return -1;
   }
   return encode_response(out, err);

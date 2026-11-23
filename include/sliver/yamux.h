@@ -8,8 +8,10 @@
  *   type: 0 data, 1 windowUpdate, 2 ping, 3 goAway
  *   flags: SYN=1, ACK=2, FIN=4, RST=8
  *
- * The client opens even stream ids (2, 4, ...), the server odd ones, the
- * initial stream window is 256 KiB.
+ * The client opens odd stream ids (1, 3, ...), the server even ones, the
+ * initial stream window is 256 KiB. FIN and RST travel on windowUpdate frames
+ * (hashicorp/yamux stream.sendClose / session.incomingStream); a FIN on a data
+ * frame is also accepted, because Go processes the flags of both frame types.
  */
 #ifndef SLIVER_YAMUX_H
 #define SLIVER_YAMUX_H
@@ -28,6 +30,15 @@ extern "C" {
 #define SLIVER_YAMUX_INITIAL_WINDOW (256u * 1024u)
 #define SLIVER_YAMUX_MAX_STREAMS 1024
 #define SLIVER_YAMUX_MAX_FRAME (64u * 1024u)
+/* Pending accepts: the session thread may be busy in a handler while several
+ * server streams open (Go keeps a 256 slot backlog). */
+#define SLIVER_YAMUX_MAX_PENDING 32u
+/* A frame body may trickle in over several TLS records; give it a bound
+ * instead of declaring the session dead on the first timeout. */
+#define SLIVER_YAMUX_BODY_TIMEOUT_MS 30000u
+/* Bounded wait for send window, so a peer that stops replenishing cannot pin
+ * the sender (and the tx lock it holds) forever. */
+#define SLIVER_YAMUX_WRITE_TIMEOUT_MS 10000u
 
 typedef struct {
   uint32_t id;
@@ -47,8 +58,14 @@ typedef struct {
   uint32_t next_stream_id;
   int failed;
   int go_away;
-  uint32_t pending_accept;
-  int pending_valid;
+  /* A partially read frame header is kept across pump() calls: a 100 ms TLS
+   * timeout in the middle of a header must not kill the session. */
+  uint8_t hdr_buf[12];
+  size_t hdr_got;
+  /* Ring of stream ids the peer opened and we have not accepted yet. */
+  uint32_t pending_ids[SLIVER_YAMUX_MAX_PENDING];
+  size_t pending_head;
+  size_t pending_count;
   /* Ids we opened ourselves: a SYN/window-update on them is not a peer stream
    * (the slot may already be released), it is the ACK of our own SYN. */
   uint32_t local_ids[SLIVER_YAMUX_MAX_STREAMS];

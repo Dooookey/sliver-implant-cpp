@@ -1,4 +1,10 @@
-/* src/platform/posix/thread.c - pthread based platform layer. */
+/* src/platform/posix/thread.c - pthread based platform layer.
+ *
+ * Thread object ownership mirrors win32/thread.c: sliver_thread_t is reference
+ * counted (creator + trampoline) because join()/detach() and the trampoline have
+ * independent lifetimes and freeing it from the trampoline alone was a use after
+ * free.
+ */
 #if !defined(_POSIX_C_SOURCE) || (_POSIX_C_SOURCE < 200809L)
 #undef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L /* clock_gettime, nanosleep */
@@ -23,6 +29,8 @@ struct sliver_thread {
   int started;
   sliver_thread_fn fn;
   void *arg;
+  int refs; /* creator + trampoline, guarded by ref_lock */
+  pthread_mutex_t ref_lock;
 };
 
 int sliver_plat_init(void) {
@@ -80,11 +88,30 @@ void sliver_mutex_unlock(sliver_mutex_t *m) {
   }
 }
 
+/* Drops one reference; the last owner destroys the object. */
+static void thread_release(sliver_thread_t *t) {
+  int left;
+  if (t == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&t->ref_lock);
+  left = --t->refs;
+  (void)pthread_mutex_unlock(&t->ref_lock);
+  if (left == 0) {
+    (void)pthread_mutex_destroy(&t->ref_lock);
+    free(t);
+  }
+}
+
 static void *thread_trampoline(void *opaque) {
   sliver_thread_t *t = (sliver_thread_t *)opaque;
-  t->fn(t->arg);
-  /* The trampoline owns t (see win32/thread.c). */
-  free(t);
+  /* Copy the entry point before a concurrent detach can drop its reference. */
+  sliver_thread_fn fn = t->fn;
+  void *arg = t->arg;
+  if (fn != NULL) {
+    fn(arg);
+  }
+  thread_release(t);
   return NULL;
 }
 
@@ -97,9 +124,15 @@ sliver_thread_t *sliver_thread_create(sliver_thread_fn fn, void *arg) {
   if (t == NULL) {
     return NULL;
   }
+  if (pthread_mutex_init(&t->ref_lock, NULL) != 0) {
+    free(t);
+    return NULL;
+  }
   t->fn = fn;
   t->arg = arg;
+  t->refs = 2; /* creator + trampoline */
   if (pthread_create(&t->handle, NULL, thread_trampoline, t) != 0) {
+    (void)pthread_mutex_destroy(&t->ref_lock);
     free(t);
     return NULL;
   }
@@ -114,13 +147,13 @@ int sliver_thread_join(sliver_thread_t *t) {
   }
   if (t->started) {
     rc = (pthread_join(t->handle, NULL) == 0) ? 0 : -1;
+    t->started = 0;
   }
-  /* t is freed by the trampoline. */
+  thread_release(t);
   return rc;
 }
 
-
-/* Detach: the thread keeps running; the trampoline frees t on exit. */
+/* Detach: the thread keeps running; the trampoline drops the last reference. */
 void sliver_thread_detach(sliver_thread_t *t) {
   if (t == NULL) {
     return;
@@ -129,4 +162,5 @@ void sliver_thread_detach(sliver_thread_t *t) {
     (void)pthread_detach(t->handle);
     t->started = 0;
   }
+  thread_release(t);
 }

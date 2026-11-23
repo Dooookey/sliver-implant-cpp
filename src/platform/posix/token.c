@@ -7,3 +7,9 @@ int sliver_make_token(const char *u, const char *p, const char *d, uint32_t t) {
 int sliver_get_system(void) { return -1; }
 
 unsigned long sliver_token_last_error(void) { return 0; }
+
+int sliver_token_owner(char *out, size_t cap) {
+  (void)out;
+  (void)cap;
+  return -1;
+}

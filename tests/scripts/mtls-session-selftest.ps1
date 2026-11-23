@@ -62,7 +62,28 @@ try {
 }
 
 Start-Sleep -Milliseconds 300
-Get-Content (Join-Path $build "mtls-server.log") -ErrorAction SilentlyContinue | Write-Host
+$log = Get-Content (Join-Path $build "mtls-server.log") -ErrorAction SilentlyContinue
+$log | Write-Host
 Get-Content (Join-Path $build "mtls-server.err") -ErrorAction SilentlyContinue | Write-Host
-if ($rc -ne 0) { throw "session selftest failed (exit $rc)" }
-Write-Host "==> session selftest passed"
+
+# The implant exits non-zero when the peer closes the session (that is how the
+# -1 from sliver_session_run() surfaces), so assert on what the peer actually
+# observed instead of on the exit code.
+$required = @(
+  'REGISTER ok',
+  'LS ok',
+  'DOWNLOAD ok',
+  'EXECUTE ok',
+  'PORTFWD DATA: "HTTP/1.0 200 OK',
+  'hello-portfwd',
+  'SHELL ok',
+  'big-output-ok=true'
+)
+$missing = @()
+foreach ($needle in $required) {
+  if (-not ($log -match [regex]::Escape($needle))) { $missing += $needle }
+}
+if ($missing.Count -ne 0) {
+  throw ("session selftest failed, missing: " + ($missing -join ', ') + " (implant exit $rc)")
+}
+Write-Host "==> session selftest passed (implant exit $rc)"

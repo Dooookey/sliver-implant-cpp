@@ -8,12 +8,21 @@
 #include "sliver/proc.h"
 
 #include <netdb.h>
+#if defined(__APPLE__)
 #include <net/if_dl.h>
+#endif
+#include <errno.h>
 #include <ifaddrs.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h> /* struct timeval for SO_*TIMEO */
 #include <sys/types.h>
+#if defined(__linux__)
+#include <arpa/inet.h>
+#include <netpacket/packet.h>
+#endif
 #include <unistd.h>
 
 struct sliver_socket {
@@ -72,7 +81,13 @@ long sliver_socket_send(sliver_socket_t *s, const void *buf, size_t len) {
 #else
   n = send(s->fd, buf, len, 0);
 #endif
-  return n < 0 ? -1 : (long)n;
+  if (n < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+      return -2; /* send buffer full / send timeout: retry later */
+    }
+    return -1;
+  }
+  return (long)n;
 }
 
 long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len) {
@@ -81,7 +96,21 @@ long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len) {
     return -1;
   }
   n = recv(s->fd, buf, len, 0);
+  if (n < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+      return -2; /* receive timeout: nothing available yet */
+    }
+    /* ECONNRESET / ENETDOWN / ...: the peer is gone for good. */
+    return -1;
+  }
   return (long)n;
+}
+
+void sliver_socket_shutdown(sliver_socket_t *s) {
+  if (s == NULL) {
+    return;
+  }
+  (void)shutdown(s->fd, SHUT_RDWR);
 }
 
 void sliver_socket_close(sliver_socket_t *s) {
@@ -130,8 +159,116 @@ void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
   (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
 
+void sliver_socket_set_send_timeout(sliver_socket_t *s, int ms) {
+  struct timeval tv;
+  if (s == NULL) {
+    return;
+  }
+  tv.tv_sec = ms / 1000;
+  tv.tv_usec = (ms % 1000) * 1000;
+  (void)setsockopt(s->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
 
 /* --- interfaces (ifconfig) ---------------------------------------------- */
+#if defined(__linux__)
+/* Linux has no sockaddr_dl/LLADDR: link-layer addresses live in sockaddr_ll. */
+static void iface_copy_mac(const struct ifaddrs *cur, char *out, size_t cap) {
+  const struct sockaddr_ll *sll;
+  const unsigned char *m;
+  if (cur->ifa_addr == NULL || cur->ifa_addr->sa_family != AF_PACKET) {
+    return;
+  }
+  sll = (const struct sockaddr_ll *)cur->ifa_addr;
+  if (sll->sll_halen < 6) {
+    return;
+  }
+  m = sll->sll_addr;
+  (void)snprintf(out, cap, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+static unsigned netmask_prefix(const struct ifaddrs *cur) {
+  const struct sockaddr_in *m4;
+  const struct sockaddr_in6 *m6;
+  unsigned bits = 0;
+  if (cur->ifa_netmask == NULL) {
+    return 0;
+  }
+  if (cur->ifa_netmask->sa_family == AF_INET) {
+    m4 = (const struct sockaddr_in *)cur->ifa_netmask;
+    uint32_t mask = ntohl(m4->sin_addr.s_addr);
+    while (mask != 0 && (mask & 0x80000000u) != 0) {
+      bits++;
+      mask <<= 1;
+    }
+    return bits;
+  }
+  if (cur->ifa_netmask->sa_family == AF_INET6) {
+    const unsigned char *m;
+    int i;
+    m6 = (const struct sockaddr_in6 *)cur->ifa_netmask;
+    m = (const unsigned char *)&m6->sin6_addr;
+    for (i = 0; i < 16; ++i) {
+      unsigned char byte = m[i];
+      while (byte != 0 && (byte & 0x80) != 0) {
+        bits++;
+        byte = (unsigned char)(byte << 1);
+      }
+    }
+    return bits;
+  }
+  return 0;
+}
+#elif defined(__APPLE__)
+static void iface_copy_mac(const struct ifaddrs *cur, char *out, size_t cap) {
+  const struct sockaddr_dl *sdl;
+  const unsigned char *m;
+  if (cur->ifa_addr == NULL || cur->ifa_addr->sa_family != AF_LINK) {
+    return;
+  }
+  sdl = (const struct sockaddr_dl *)cur->ifa_addr;
+  if (sdl->sdl_alen != 6) {
+    return;
+  }
+  m = (const unsigned char *)LLADDR(sdl);
+  (void)snprintf(out, cap, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+static unsigned netmask_prefix(const struct ifaddrs *cur) {
+  return 0;
+}
+#else
+static void iface_copy_mac(const struct ifaddrs *cur, char *out, size_t cap) {
+  (void)cur;
+  (void)out;
+  (void)cap;
+}
+static unsigned netmask_prefix(const struct ifaddrs *cur) {
+  (void)cur;
+  return 0;
+}
+#endif
+
+/* getnameinfo needs the sockaddr length; BSD carries it in sa_len, Linux does
+ * not, so derive it from the family. */
+static socklen_t sockaddr_len(const struct sockaddr *sa) {
+  if (sa == NULL) {
+    return 0;
+  }
+#if defined(__APPLE__)
+  return sa->sa_len;
+#else
+  switch (sa->sa_family) {
+    case AF_INET:
+      return (socklen_t)sizeof(struct sockaddr_in);
+    case AF_INET6:
+      return (socklen_t)sizeof(struct sockaddr_in6);
+    default:
+      return 0;
+  }
+#endif
+}
+
 int sliver_net_list(sliver_iface_t *out, int max) {
   struct ifaddrs *list = NULL;
   struct ifaddrs *cur;
@@ -165,20 +302,21 @@ int sliver_net_list(sliver_iface_t *out, int max) {
     if (cur->ifa_addr == NULL) {
       continue;
     }
-    if (cur->ifa_addr->sa_family == AF_LINK) {
-      const struct sockaddr_dl *sdl = (const struct sockaddr_dl *)cur->ifa_addr;
-      if (sdl->sdl_alen == 6) {
-        const unsigned char *m = (const unsigned char *)LLADDR(sdl);
-        (void)snprintf(out[idx].mac, sizeof(out[idx].mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-                       m[0], m[1], m[2], m[3], m[4], m[5]);
+    if (out[idx].mac[0] == 0) {
+      iface_copy_mac(cur, out[idx].mac, sizeof(out[idx].mac));
+      if (out[idx].mac[0] != 0) {
+        continue;
       }
-      continue;
     }
     if ((cur->ifa_addr->sa_family == AF_INET || cur->ifa_addr->sa_family == AF_INET6) &&
         out[idx].ip_count < 8) {
-      if (getnameinfo(cur->ifa_addr, cur->ifa_addr->sa_len, host, sizeof(host), NULL, 0,
-                      NI_NUMERICHOST) == 0) {
-        (void)snprintf(out[idx].ips[out[idx].ip_count], sizeof(out[idx].ips[0]), "%s", host);
+      socklen_t salen = sockaddr_len(cur->ifa_addr);
+      if (salen != 0 &&
+          getnameinfo(cur->ifa_addr, salen, host, sizeof(host), NULL, 0, NI_NUMERICHOST) == 0) {
+        /* Sliver's client shows "addr/prefix" and uses the prefix to tell local
+         * addresses apart (client/command/network/ifconfig.go). */
+        (void)snprintf(out[idx].ips[out[idx].ip_count], sizeof(out[idx].ips[0]), "%s/%u", host,
+                       netmask_prefix(cur));
         out[idx].ip_count++;
       }
     }

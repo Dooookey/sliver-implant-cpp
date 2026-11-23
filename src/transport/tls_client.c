@@ -16,12 +16,17 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
+#include "mbedtls/net_sockets.h" /* MBEDTLS_ERR_NET_{SEND,RECV}_FAILED */
 #include "mbedtls/pk.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 #include "sliver/crypto.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
+
+#define SLIVER_TLS_PENDING_MAX 8192
+#define SLIVER_TLS_HANDSHAKE_TIMEOUT_MS 30000u
+#define SLIVER_TLS_SEND_TIMEOUT_MS 10000
 
 struct sliver_tls {
   sliver_socket_t *sock;
@@ -33,6 +38,11 @@ struct sliver_tls {
   mbedtls_ctr_drbg_context drbg;
   mbedtls_entropy_context entropy;
   sliver_mutex_t *io_lock; /* mbedTLS contexts are not thread safe: serialise R/W */
+  /* Application data pulled off the record layer while draining a post-handshake
+   * record inside sliver_tls_write(). It belongs to the reader and must be
+   * handed back by sliver_tls_read() instead of being dropped. */
+  unsigned char pending[SLIVER_TLS_PENDING_MAX];
+  size_t pending_len;
   int ssl_init;
   int conf_init;
   int ca_init;
@@ -208,8 +218,11 @@ static char *normalize_pem(const char *pem) {
 static int bio_send(void *ctx, const unsigned char *buf, size_t len) {
   sliver_tls_t *conn = (sliver_tls_t *)ctx;
   long n = sliver_socket_send(conn->sock, buf, len);
+  if (n == -2) {
+    return MBEDTLS_ERR_SSL_WANT_WRITE; /* send buffer full: retry later */
+  }
   if (n <= 0) {
-    return MBEDTLS_ERR_SSL_WANT_WRITE;
+    return MBEDTLS_ERR_NET_SEND_FAILED;
   }
   return (int)n;
 }
@@ -220,19 +233,24 @@ static int bio_recv(void *ctx, unsigned char *buf, size_t len) {
   if (n == 0) {
     return MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
   }
+  if (n == -2) {
+    return MBEDTLS_ERR_SSL_WANT_READ; /* receive timeout: nothing yet */
+  }
   if (n < 0) {
-    return MBEDTLS_ERR_SSL_WANT_READ;
+    /* RST, ENETDOWN, ECONNRESET...: a dead peer must fail the handshake/read so
+     * the session loop can reconnect instead of spinning forever. */
+    return MBEDTLS_ERR_NET_RECV_FAILED;
   }
   return (int)n;
 }
 
 static void tls_free(sliver_tls_t *conn) {
+  if (conn == NULL) {
+    return;
+  }
   if (conn->io_lock != NULL) {
     sliver_mutex_destroy(conn->io_lock);
     conn->io_lock = NULL;
-  }
-  if (conn == NULL) {
-    return;
   }
   if (conn->ssl_init) {
     (void)mbedtls_ssl_close_notify(&conn->ssl);
@@ -406,17 +424,30 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
    * writer thread (shell output, heartbeat) can use it without corrupting the
    * TLS record stream ("bad record MAC" on the server). */
   sliver_socket_set_recv_timeout(conn->sock, 100);
+  /* Bounded send: a peer that stops reading must not pin a writer (and the
+   * session tx lock it holds) forever. */
+  sliver_socket_set_send_timeout(conn->sock, SLIVER_TLS_SEND_TIMEOUT_MS);
   mbedtls_ssl_set_bio(&conn->ssl, conn, bio_send, bio_recv, NULL);
 
-  while ((rc = mbedtls_ssl_handshake(&conn->ssl)) != 0) {
-    if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
-      char detail[128];
-      mbedtls_strerror(rc, detail, sizeof(detail));
-      if (err != NULL) {
-        (void)snprintf(err, err_len, "tls: handshake failed rc=-0x%04x (%s)", -rc, detail);
+  {
+    uint64_t deadline = sliver_now_ms() + SLIVER_TLS_HANDSHAKE_TIMEOUT_MS;
+    while ((rc = mbedtls_ssl_handshake(&conn->ssl)) != 0) {
+      if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
+        char detail[128];
+        mbedtls_strerror(rc, detail, sizeof(detail));
+        if (err != NULL) {
+          (void)snprintf(err, err_len, "tls: handshake failed rc=-0x%04x (%s)", -rc, detail);
+        }
+        tls_free(conn);
+        return -1;
       }
-      tls_free(conn);
-      return -1;
+      if (sliver_now_ms() >= deadline) {
+        /* A peer that accepts TCP and never speaks must not block the reconnect
+         * loop forever (MaxConnectionErrors would never be reached). */
+        set_err(err, err_len, "tls: handshake timed out");
+        tls_free(conn);
+        return -1;
+      }
     }
   }
   if (err != NULL && err_len != 0) {
@@ -443,7 +474,15 @@ long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {
      * close_notify) before it can write. Drain it once, then retry. */
     {
       unsigned char scratch[512];
-      int rr = mbedtls_ssl_read(&conn->ssl, scratch, sizeof(scratch));
+      int rr;
+      if (conn->pending_len != 0) {
+        /* Application data is already owned by the reader: retry the write
+         * without touching the read side, otherwise the ordering of the byte
+         * stream would be lost. */
+        rc = MBEDTLS_ERR_SSL_WANT_READ;
+        break;
+      }
+      rr = mbedtls_ssl_read(&conn->ssl, scratch, sizeof(scratch));
       if (rr == MBEDTLS_ERR_SSL_WANT_READ || rr == MBEDTLS_ERR_SSL_WANT_WRITE) {
         rc = MBEDTLS_ERR_SSL_WANT_READ; /* nothing to drain yet */
         break;
@@ -451,6 +490,21 @@ long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {
       if (rr <= 0) {
         rc = -1; /* fatal */
         break;
+      }
+      /* mbedTLS returned application data (a yamux frame, for instance). Hand it
+       * to the reader through the pending buffer instead of dropping it: losing
+       * those bytes desynchronises the whole stream. */
+      {
+        size_t take = (size_t)rr;
+        if (take > sizeof(conn->pending) - conn->pending_len) {
+          take = sizeof(conn->pending) - conn->pending_len;
+        }
+        memcpy(conn->pending + conn->pending_len, scratch, take);
+        conn->pending_len += take;
+        if (take < (size_t)rr) {
+          LOG_WARN("tls: pending buffer full, %u byte(s) of a drained record lost",
+                   (unsigned)((size_t)rr - take));
+        }
       }
     }
   }
@@ -469,11 +523,25 @@ long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {
 
 long sliver_tls_read(sliver_tls_t *conn, void *buf, size_t len) {
   int rc;
-  if (conn == NULL) {
+  if (conn == NULL || buf == NULL) {
     return -1;
   }
   if (conn->io_lock != NULL) {
     sliver_mutex_lock(conn->io_lock);
+  }
+  if (conn->pending_len != 0) {
+    /* Application data drained while writing: always deliver it first so the
+     * byte stream stays in order. */
+    size_t n = conn->pending_len < len ? conn->pending_len : len;
+    memcpy(buf, conn->pending, n);
+    if (n < conn->pending_len) {
+      memmove(conn->pending, conn->pending + n, conn->pending_len - n);
+    }
+    conn->pending_len -= n;
+    if (conn->io_lock != NULL) {
+      sliver_mutex_unlock(conn->io_lock);
+    }
+    return (long)n;
   }
   rc = mbedtls_ssl_read(&conn->ssl, (unsigned char *)buf, len);
   if (conn->io_lock != NULL) {

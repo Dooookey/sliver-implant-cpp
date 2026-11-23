@@ -1,12 +1,20 @@
 /* src/core/fileio.c - portable file read/write used by download/upload. */
+#if !defined(_WIN32) && (!defined(_POSIX_C_SOURCE) || _POSIX_C_SOURCE < 200809L)
+#undef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L /* fseeko/ftello, off_t */
+#endif
+
 #include <errno.h>
 #include <stdio.h>
+#include <sys/types.h> /* off_t */
 
 #if defined(_WIN32)
 #define SLIVER_FSEEK(f, off) _fseeki64((f), (long long)(off), SEEK_SET)
+#define SLIVER_FSEEK_END(f)  _fseeki64((f), 0, SEEK_END)
 #define SLIVER_FTELL(f)      _ftelli64((f))
 #else
 #define SLIVER_FSEEK(f, off) fseeko((f), (off_t)(off), SEEK_SET)
+#define SLIVER_FSEEK_END(f)  fseeko((f), 0, SEEK_END)
 #define SLIVER_FTELL(f)      ftello((f))
 #endif
 #include <stdlib.h>
@@ -39,7 +47,25 @@ int sliver_fs_read_chunk(const char *path, int64_t start, int64_t max, sliver_bu
     }
   }
   (void)pos;
+  /* Never allocate the caller's full cap for a small file: clamp to what is
+   * actually left after `start`. */
   want = (size_t)max;
+  if (want > 64 * 1024) {
+    long long end = 0;
+    if (SLIVER_FSEEK_END(f) == 0) {
+      end = SLIVER_FTELL(f);
+    }
+    if (end > (long long)start) {
+      long long remaining = end - (long long)start;
+      if (remaining < (long long)want) {
+        want = (size_t)remaining;
+      }
+    }
+    if (SLIVER_FSEEK(f, start) != 0) {
+      (void)fclose(f);
+      return -1;
+    }
+  }
   tmp = (uint8_t *)malloc(want);
   if (tmp == NULL) {
     (void)fclose(f);
@@ -88,7 +114,8 @@ int64_t sliver_fs_size(const char *path) {
   if (f == NULL) {
     return -1;
   }
-  if (SLIVER_FSEEK(f, 0) != 0) {
+  /* Seek to the end first: ftell on a freshly opened file is always 0. */
+  if (SLIVER_FSEEK_END(f) != 0) {
     (void)fclose(f);
     return -1;
   }

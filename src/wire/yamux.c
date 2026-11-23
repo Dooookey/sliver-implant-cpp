@@ -39,14 +39,39 @@ static uint32_t get_u32_be(const uint8_t *p) {
          (uint32_t)p[3];
 }
 
-static int io_read_full(sliver_yamux_t *y, void *buf, size_t len) {
-  size_t got = 0;
-  while (got < len) {
-    long n = y->read_fn(y->ctx, (uint8_t *)buf + got, len - got);
+/* Fills y->hdr_buf up to 12 bytes, keeping the partial prefix across calls so a
+ * receive timeout never splits a header. Returns 0 when a full header is
+ * buffered, 1 when more data is needed, -1 on a fatal read error. */
+static int io_fill_header(sliver_yamux_t *y) {
+  while (y->hdr_got < sizeof(y->hdr_buf)) {
+    long n = y->read_fn(y->ctx, y->hdr_buf + y->hdr_got, sizeof(y->hdr_buf) - y->hdr_got);
     if (n == -2) {
-      /* No data yet (TLS receive timeout): keep what we have and let the caller
-       * retry, releasing the TLS context in between. */
-      return got == 0 ? 1 : -1;
+      /* No data yet (TLS receive timeout): the prefix read so far is kept. */
+      return 1;
+    }
+    if (n <= 0) {
+      return -1;
+    }
+    y->hdr_got += (size_t)n;
+  }
+  return 0;
+}
+
+/* Reads a frame body, which may arrive over several records. A timeout only
+ * retries until the body deadline expires, so a slow peer does not tear down
+ * the session while a stalled one still cannot hold it forever. */
+static int io_read_body(sliver_yamux_t *y, void *buf, size_t len) {
+  uint8_t *out = (uint8_t *)buf;
+  size_t got = 0;
+  uint64_t deadline = sliver_now_ms() + SLIVER_YAMUX_BODY_TIMEOUT_MS;
+
+  while (got < len) {
+    long n = y->read_fn(y->ctx, out + got, len - got);
+    if (n == -2) {
+      if (sliver_now_ms() >= deadline) {
+        return -1;
+      }
+      continue;
     }
     if (n <= 0) {
       return -1;
@@ -134,13 +159,47 @@ static sliver_yamux_stream_t *find_stream(sliver_yamux_t *y, uint32_t id) {
   return NULL;
 }
 
+/* True when `id` is a stream we opened ourselves (monotonic: never reused). A
+ * SYN frame on such an id is the peer's ACK, not a new stream. */
+static int is_local_id(const sliver_yamux_t *y, uint32_t id) {
+  for (size_t i = 0; i < y->local_count; ++i) {
+    if (y->local_ids[i] == id) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void pending_push(sliver_yamux_t *y, uint32_t id) {
+  if (y->pending_count >= SLIVER_YAMUX_MAX_PENDING) {
+    /* Backlog full: reset the stream instead of silently dropping the request
+     * (Go closes the session when its own backlog overflows). */
+    (void)send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_RST, id, NULL, 0);
+    release_stream(find_stream(y, id));
+    return;
+  }
+  y->pending_ids[(y->pending_head + y->pending_count) % SLIVER_YAMUX_MAX_PENDING] = id;
+  y->pending_count++;
+}
+
+static int pending_pop(sliver_yamux_t *y, uint32_t *id) {
+  if (y->pending_count == 0) {
+    return 0;
+  }
+  *id = y->pending_ids[y->pending_head];
+  y->pending_head = (y->pending_head + 1) % SLIVER_YAMUX_MAX_PENDING;
+  y->pending_count--;
+  return 1;
+}
+
 static sliver_yamux_stream_t *alloc_stream(sliver_yamux_t *y, uint32_t id) {
   sliver_yamux_stream_t *s = find_stream(y, id);
   if (s != NULL) {
     return s;
   }
-  /* Table full: reclaim the oldest stream we already finished writing. The peer
-   * often never sends FIN for one-shot envelopes, so those slots would leak. */
+  /* Table full: reclaim a stream that is finished on both directions. The peer
+   * often never sends FIN for one-shot envelopes, so those slots would leak;
+   * a slot that still holds unread data must never be reclaimed. */
   {
     int have_slot = 0;
     for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
@@ -151,11 +210,22 @@ static sliver_yamux_stream_t *alloc_stream(sliver_yamux_t *y, uint32_t id) {
     }
     if (!have_slot) {
       sliver_yamux_stream_t *victim = NULL;
+      sliver_yamux_stream_t *fallback = NULL;
       for (size_t i = 0; i < SLIVER_YAMUX_MAX_STREAMS; ++i) {
-        if (y->streams[i].used && y->streams[i].closed_write &&
-            (victim == NULL || y->streams[i].id < victim->id)) {
-          victim = &y->streams[i];
+        sliver_yamux_stream_t *cur = &y->streams[i];
+        if (!cur->used || !cur->closed_write) {
+          continue;
         }
+        if (cur->fin_received && cur->in_off >= cur->in.len) {
+          if (victim == NULL || cur->id < victim->id) {
+            victim = cur;
+          }
+        } else if (fallback == NULL || cur->id < fallback->id) {
+          fallback = cur;
+        }
+      }
+      if (victim == NULL) {
+        victim = fallback;
       }
       if (victim != NULL) {
         release_stream(victim);
@@ -241,9 +311,11 @@ int sliver_yamux_open(sliver_yamux_t *y, uint32_t *stream_id) {
     }
     return -1;
   }
-  /* SYN window update carries the initial window size. */
-  if (send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_SYN, id, NULL,
-                 SLIVER_YAMUX_INITIAL_WINDOW) != 0) {
+  /* SYN window update: a new stream advertises a zero delta, exactly like
+   * hashicorp/yamux (stream.sendWindowUpdate computes (max-bufLen)-recvWindow,
+   * which is 0 for a fresh stream). Sending the full window here would inflate
+   * the peer's send window to 2x what we actually buffer. */
+  if (send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_SYN, id, NULL, 0) != 0) {
     y->failed = 1;
     if (y->streams_lock != NULL) {
       sliver_mutex_unlock(y->streams_lock);
@@ -296,14 +368,16 @@ static int yamux_pump_locked(sliver_yamux_t *y) {
     return -1;
   }
   {
-    int rc = io_read_full(y, header, sizeof(header));
+    int rc = io_fill_header(y);
     if (rc == 1) {
-      return 1; /* no frame yet */
+      return 1; /* no complete frame yet */
     }
     if (rc != 0) {
       y->failed = 1;
       return -1;
     }
+    memcpy(header, y->hdr_buf, sizeof(header));
+    y->hdr_got = 0;
   }
   if (header[0] != YAMUX_VERSION) {
     y->failed = 1;
@@ -324,7 +398,7 @@ static int yamux_pump_locked(sliver_yamux_t *y) {
          * peer's writes do not stall forever, then ask it to drop the stream. */
         while (remaining > 0) {
           uint32_t n = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
-          if (io_read_full(y, chunk, n) != 0) {
+          if (io_read_body(y, chunk, n) != 0) {
             y->failed = 1;
             return -1;
           }
@@ -346,7 +420,7 @@ static int yamux_pump_locked(sliver_yamux_t *y) {
       }
       while (remaining > 0) {
         uint32_t n = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
-        if (io_read_full(y, chunk, n) != 0) {
+        if (io_read_body(y, chunk, n) != 0) {
           y->failed = 1;
           return -1;
         }
@@ -356,7 +430,7 @@ static int yamux_pump_locked(sliver_yamux_t *y) {
           remaining -= n;
           while (remaining > 0) {
             uint32_t m = remaining > sizeof(chunk) ? (uint32_t)sizeof(chunk) : remaining;
-            if (io_read_full(y, chunk, m) != 0) {
+            if (io_read_body(y, chunk, m) != 0) {
               y->failed = 1;
               return -1;
             }
@@ -394,17 +468,33 @@ static int yamux_pump_locked(sliver_yamux_t *y) {
           }
           return 0;
         }
+        if (is_local_id(y, id)) {
+          /* ACK for one of our streams whose slot is already gone. Go keeps the
+           * stream alive on its side; answering with a fresh ACK would make it
+           * see a duplicate stream id and send goAway(protoErr), killing the
+           * whole session. Just account for the window and move on. */
+          return 0;
+        }
         /* Peer initiated stream: acknowledge and remember it for accept. */
         if (alloc_stream(y, id) != NULL) {
           (void)send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_ACK, id, NULL, 0);
-          y->pending_accept = id;
-          y->pending_valid = 1;
+          pending_push(y, id);
         }
         return 0;
       }
       if (s != NULL) {
+        /* hashicorp/yamux carries FIN and RST on windowUpdate frames
+         * (stream.sendClose, session.incomingStream). */
+        if ((flags & YAMUX_FLAG_RST) != 0) {
+          release_stream(s);
+          return 0;
+        }
+        if ((flags & YAMUX_FLAG_FIN) != 0) {
+          s->fin_received = 1;
+        }
         s->send_window = (UINT32_MAX - s->send_window < length) ? UINT32_MAX
                                                                  : s->send_window + length;
+        maybe_release(s);
       }
       return 0;
     }
@@ -422,7 +512,7 @@ static int yamux_pump_locked(sliver_yamux_t *y) {
       while (length > 0) {
         uint8_t chunk[256];
         uint32_t n = length > sizeof(chunk) ? (uint32_t)sizeof(chunk) : length;
-        if (io_read_full(y, chunk, n) != 0) {
+        if (io_read_body(y, chunk, n) != 0) {
           y->failed = 1;
           return -1;
         }
@@ -436,6 +526,7 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
   const uint8_t *p = (const uint8_t *)buf;
   sliver_yamux_stream_t *s;
   size_t sent = 0;
+  uint64_t window_deadline = 0;
 
   if (y == NULL || y->failed || (buf == NULL && len != 0)) {
     return -1;
@@ -454,6 +545,18 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
   while (sent < len) {
     size_t chunk;
     if (s->send_window == 0) {
+      /* Bounded wait: a peer that stops replenishing the window must not pin
+       * this sender (and the session tx lock it holds) forever. */
+      if (window_deadline == 0) {
+        window_deadline = sliver_now_ms() + SLIVER_YAMUX_WRITE_TIMEOUT_MS;
+      } else if (sliver_now_ms() >= window_deadline) {
+        LOG_ERROR("yamux: send window stalled (stream %u, %u/%u bytes)", stream_id,
+                  (unsigned)sent, (unsigned)len);
+        if (y->streams_lock != NULL) {
+          sliver_mutex_unlock(y->streams_lock);
+        }
+        return -1;
+      }
       /* Release streams_lock before pumping: pump takes pump_lock -> streams_lock. */
       if (y->streams_lock != NULL) {
         sliver_mutex_unlock(y->streams_lock);
@@ -479,6 +582,7 @@ int sliver_yamux_write(sliver_yamux_t *y, uint32_t stream_id, const void *buf, s
       }
       continue;
     }
+    window_deadline = 0;
     chunk = len - sent;
     if (chunk > SLIVER_YAMUX_MAX_FRAME) {
       chunk = SLIVER_YAMUX_MAX_FRAME;
@@ -523,7 +627,8 @@ int sliver_yamux_close_write(sliver_yamux_t *y, uint32_t stream_id) {
     return 0;
   }
   if (!s->closed_write) {
-    if (send_frame(y, YAMUX_TYPE_DATA, YAMUX_FLAG_FIN, stream_id, NULL, 0) != 0) {
+    /* FIN travels on a windowUpdate frame (hashicorp/yamux stream.sendClose). */
+    if (send_frame(y, YAMUX_TYPE_WINDOW_UPDATE, YAMUX_FLAG_FIN, stream_id, NULL, 0) != 0) {
       y->failed = 1;
       rc = -1;
     } else {
@@ -563,12 +668,7 @@ int sliver_yamux_accept(sliver_yamux_t *y, uint32_t *stream_id) {
       if (y->streams_lock != NULL) {
         sliver_mutex_lock(y->streams_lock);
       }
-      have = y->pending_valid;
-      if (have) {
-        *stream_id = y->pending_accept;
-        y->pending_accept = 0;
-        y->pending_valid = 0;
-      }
+      have = pending_pop(y, stream_id);
       if (y->streams_lock != NULL) {
         sliver_mutex_unlock(y->streams_lock);
       }

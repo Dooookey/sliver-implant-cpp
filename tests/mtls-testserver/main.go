@@ -514,14 +514,19 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 	echoPort, _ := strconv.Atoi(echoPortStr)
 	defer stopEcho()
 	pfTunnel := uint64(0xAABBCCEE)
-	// Real clients bind a freshly created tunnel with a zero-byte TunnelData
-	// before sending PortfwdReq; the implant must acknowledge it.
+	// A real client binds its tunnel server-side (core.Tunnel.BindClient) and the
+	// server then sends PortfwdReq; no acknowledgement travels back from the
+	// implant, so this frame is fire and forget (waiting for a reply hung the
+	// harness forever).
 	bindTd := appendUvarint(nil, 8<<3)
 	bindTd = appendUvarint(bindTd, pfTunnel)
-	if v, _, err := rawExchange(sess, serverPriv, serverPub, clientPub, makeEnvelope(54, 22, bindTd)); err == nil {
-		fmt.Printf("TUNNEL BIND ok: ack=%d tunnel=%d\n", v[4], v[8])
+	if st, err := sess.OpenStream(); err == nil {
+		env := makeEnvelope(54, 22, bindTd)
+		_ = writeFrame(st, rawSignature(serverPriv, serverPub, env), env)
+		st.Close()
+		fmt.Printf("TUNNEL BIND sent: tunnel=%d\n", pfTunnel)
 	} else {
-		log.Printf("tunnel bind failed: %v", err)
+		log.Printf("tunnel bind write failed: %v", err)
 	}
 	pfReq := append(protoStr(3, "127.0.0.1"), appendUvarint(nil, 1<<3)...)
 	pfReq = appendUvarint(pfReq, uint64(echoPort))
@@ -591,29 +596,38 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		firstSeq := int64(-1)
 		var ackSeen uint64
 		frames := 0
-		for i := 0; i < 600 && !strings.Contains(out, "after-big") ; i++ {
+		// Bound the whole stage: AcceptStream has no deadline, so a peer that
+		// sends nothing used to hang the harness forever.
+		shellBudget := time.AfterFunc(90*time.Second, func() { _ = sess.Close() })
+		for i := 0; i < 2000 && !strings.Contains(out, "after-big"); i++ {
 			rs, err := sess.AcceptStream()
 			if err != nil {
 				break
 			}
 			_, envOut, err := readFrame(rs)
 			if err != nil {
+				rs.Close()
 				break
 			}
 			v, b := envelopeFields(envOut)
 			if v[2] == 22 {
 				frames++
 				tv, db := envelopeFields(b[3])
+				// Ack and Data coexist: the operator client only treats a frame as
+				// a pure acknowledgement when it is empty (client/core/tunnel.go).
 				if tv[4] != 0 {
 					ackSeen = tv[4]
-				} else if firstSeq < 0 {
-					firstSeq = int64(tv[3])
-				} else {
+				}
+				if len(db[1]) != 0 {
+					if firstSeq < 0 {
+						firstSeq = int64(tv[3])
+					}
 					out += string(db[1])
 				}
 			}
 			rs.Close()
 		}
+		shellBudget.Stop()
 		fmt.Printf("SHELL OUT (first-seq=%d, ack=%d, frames=%d, big-output-ok=%v, chinese-ok=%v, bytes=%d)\n",
 			firstSeq, ackSeen, frames, len(out) > 4096,
 			strings.Contains(out, "\u4e2d\u6587\u6d4b\u8bd5") || strings.Contains(out, "\xd6\xd0\xce\xc4\xb2\xe2\xca\xd4"), len(out))
@@ -702,27 +716,33 @@ func rpcCall(sess *yamux.Session, priv ed25519.PrivateKey, pub, clientPub ed2551
 	if err := writeFrame(stream, rawSignature(priv, pub, env), env); err != nil {
 		return nil, nil, err
 	}
-	respStream, err := sess.AcceptStream()
-	if err != nil {
-		return nil, nil, err
+	// The implant answers every request on its own stream, and async messages
+	// (tunnel data/close) arrive on streams of their own. Match by envelope id
+	// instead of assuming the next stream is our response.
+	for attempt := 0; attempt < 16; attempt++ {
+		respStream, err := sess.AcceptStream()
+		if err != nil {
+			return nil, nil, err
+		}
+		sig, resp, err := readFrame(respStream)
+		respStream.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ed25519.Verify(clientPub, resp, sig[10:]) {
+			return nil, nil, fmt.Errorf("bad response signature")
+		}
+		v, b := envelopeFields(resp)
+		if v[1] != id {
+			continue // unrelated async frame (tunnel data/close)
+		}
+		if v[2] != uint64(wantType) {
+			return v, b, fmt.Errorf("want type %d got %d", wantType, v[2])
+		}
+		stream.Close()
+		return v, b, nil
 	}
-	sig, resp, err := readFrame(respStream)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !ed25519.Verify(clientPub, resp, sig[10:]) {
-		return nil, nil, fmt.Errorf("bad response signature")
-	}
-	v, b := envelopeFields(resp)
-	if v[2] != uint64(wantType) {
-		return v, b, fmt.Errorf("want type %d got %d", wantType, v[2])
-	}
-	if v[1] != id {
-		return v, b, fmt.Errorf("response id %d != %d", v[1], id)
-	}
-	stream.Close()
-	respStream.Close()
-	return v, b, nil
+	return nil, nil, fmt.Errorf("no response with id %d", id)
 }
 
 func appendUvarint(dst []byte, v uint64) []byte {

@@ -2,6 +2,7 @@
 #ifndef SLIVER_TOKEN_H
 #define SLIVER_TOKEN_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -13,6 +14,8 @@ int sliver_make_token(const char *username, const char *password, const char *do
 int sliver_get_system(void);
 /* Win32 error of the last make-token failure (1326 = bad credentials). */
 unsigned long sliver_token_last_error(void);
+/* Writes "DOMAIN\user" for the token in effect on this thread (Windows). */
+int sliver_token_owner(char *out, size_t cap);
 
 #endif
 

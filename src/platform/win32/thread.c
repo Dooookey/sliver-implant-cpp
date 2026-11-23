@@ -2,6 +2,13 @@
  *
  * Deliberately uses raw Win32 primitives (no winpthreads, no CRT threads) so
  * MinGW-w64 cross builds behave exactly like MSVC builds.
+ *
+ * Thread object ownership: sliver_thread_t is reference counted because three
+ * parties look at it with independent lifetimes - the creator (join/detach), the
+ * trampoline, and the handle stored inside it. Freeing it from the trampoline
+ * alone raced with join()/detach() touching t->handle after the thread had
+ * already exited (use after free on every short lived worker). Both the creator
+ * and the trampoline hold one reference; whoever drops the last one frees.
  */
 #include "sliver/platform.h"
 
@@ -22,6 +29,7 @@ struct sliver_thread {
   HANDLE handle;
   sliver_thread_fn fn;
   void *arg;
+  volatile LONG refs; /* creator + trampoline */
 };
 
 int sliver_plat_init(void) {
@@ -65,12 +73,25 @@ void sliver_mutex_unlock(sliver_mutex_t *m) {
   }
 }
 
+/* Drops one reference; the last owner frees the thread object. */
+static void thread_release(sliver_thread_t *t) {
+  if (t == NULL) {
+    return;
+  }
+  if (InterlockedDecrement(&t->refs) == 0) {
+    free(t);
+  }
+}
+
 static DWORD WINAPI thread_trampoline(LPVOID opaque) {
   sliver_thread_t *t = (sliver_thread_t *)opaque;
-  t->fn(t->arg);
-  /* The trampoline owns t: freeing it in detach/join raced with this read of
-   * t->fn/t->arg and crashed detached workers (execute/file/shell/portfwd). */
-  free(t);
+  /* Copy the entry point before it can be released by a concurrent detach. */
+  sliver_thread_fn fn = t->fn;
+  void *arg = t->arg;
+  if (fn != NULL) {
+    fn(arg);
+  }
+  thread_release(t);
   return 0;
 }
 
@@ -85,6 +106,7 @@ sliver_thread_t *sliver_thread_create(sliver_thread_fn fn, void *arg) {
   }
   t->fn = fn;
   t->arg = arg;
+  t->refs = 2; /* creator + trampoline */
   t->handle = CreateThread(NULL, 0, thread_trampoline, t, 0, NULL);
   if (t->handle == NULL) {
     free(t);
@@ -95,26 +117,33 @@ sliver_thread_t *sliver_thread_create(sliver_thread_fn fn, void *arg) {
 
 int sliver_thread_join(sliver_thread_t *t) {
   int rc = -1;
+  HANDLE handle;
   if (t == NULL) {
     return -1;
   }
-  if (t->handle != NULL) {
-    if (WaitForSingleObject(t->handle, INFINITE) == WAIT_OBJECT_0) {
+  handle = t->handle;
+  if (handle != NULL) {
+    if (WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0) {
       rc = 0;
     }
-    (void)CloseHandle(t->handle);
+    t->handle = NULL;
+    (void)CloseHandle(handle);
   }
-  /* t is freed by the trampoline. */
+  thread_release(t);
   return rc;
 }
 
-/* Detach: the thread keeps running; the trampoline frees t on exit. */
+/* Detach: the thread keeps running; only the handle is dropped here. The
+ * trampoline drops the last reference when the thread returns. */
 void sliver_thread_detach(sliver_thread_t *t) {
+  HANDLE handle;
   if (t == NULL) {
     return;
   }
-  if (t->handle != NULL) {
-    (void)CloseHandle(t->handle);
-    t->handle = NULL;
+  handle = t->handle;
+  t->handle = NULL;
+  if (handle != NULL) {
+    (void)CloseHandle(handle);
   }
+  thread_release(t);
 }

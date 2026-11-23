@@ -186,9 +186,12 @@ int sliver_age_encrypt(const char *recipient_public_key,
   if (sliver_x25519_shared(eph_sk, recipient, shared) != 0) {
     goto cleanup;
   }
-  memcpy(salt, eph_pk, 32);
-  memcpy(salt + 32, recipient, 32);
-  if (sliver_hkdf_sha256(shared, 32, salt, sizeof(salt), AGE_LABEL, strlen(AGE_LABEL),
+  /* age x25519 stanza: salt = recipient_pk || ephemeral_pk, HKDF secret is the
+   * shared secret (ikm) and the salt is the salt (Go: hkdf.New(sha256,
+   * sharedSecret, salt, label)). */
+  memcpy(salt, recipient, 32);
+  memcpy(salt + 32, eph_pk, 32);
+  if (sliver_hkdf_sha256(salt, sizeof(salt), shared, 32, AGE_LABEL, strlen(AGE_LABEL),
                          wrap_key, sizeof(wrap_key)) != 0) {
     goto cleanup;
   }
@@ -204,7 +207,7 @@ int sliver_age_encrypt(const char *recipient_public_key,
   if (sliver_random_bytes(stream_nonce, sizeof(stream_nonce)) != 0) {
     goto cleanup;
   }
-  if (sliver_hkdf_sha256(file_key, sizeof(file_key), stream_nonce, sizeof(stream_nonce),
+  if (sliver_hkdf_sha256(stream_nonce, sizeof(stream_nonce), file_key, sizeof(file_key),
                          "payload", 7, stream_key, sizeof(stream_key)) != 0) {
     goto cleanup;
   }
@@ -331,9 +334,10 @@ int sliver_age_decrypt(const char *identity,
   if (sliver_x25519_shared(sk, eph_pk, shared) != 0) {
     goto cleanup;
   }
-  memcpy(salt, eph_pk, 32);
-  memcpy(salt + 32, our_pk, 32);
-  if (sliver_hkdf_sha256(shared, 32, salt, sizeof(salt), AGE_LABEL, strlen(AGE_LABEL),
+  /* Decrypt side: our key takes the recipient slot (see the encrypt path). */
+  memcpy(salt, our_pk, 32);
+  memcpy(salt + 32, eph_pk, 32);
+  if (sliver_hkdf_sha256(salt, sizeof(salt), shared, 32, AGE_LABEL, strlen(AGE_LABEL),
                          wrap_key, sizeof(wrap_key)) != 0) {
     goto cleanup;
   }
@@ -356,7 +360,7 @@ int sliver_age_decrypt(const char *identity,
   if (plain == NULL) {
     goto cleanup;
   }
-  if (sliver_hkdf_sha256(file_key, sizeof(file_key), stream_nonce, sizeof(stream_nonce),
+  if (sliver_hkdf_sha256(stream_nonce, sizeof(stream_nonce), file_key, sizeof(file_key),
                          "payload", 7, stream_key, sizeof(stream_key)) != 0) {
     goto cleanup;
   }

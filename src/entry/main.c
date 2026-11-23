@@ -1066,10 +1066,10 @@ int sliver_cli_main(int argc, char **argv) {
     /* Self-contained implant: no arguments, everything from the injected
      * config (this is what generate-cpp produces). */
     int rc = run_from_build_config(argc > 0 ? argv[0] : NULL);
-    if (rc >= 0) {
-      sliver_plat_cleanup();
-      return rc;
-    }
+    sliver_plat_cleanup();
+    /* A missing/invalid build config is a startup failure: it must not look
+     * like a successful run (returning 0 broke exit-code based health checks). */
+    return rc < 0 ? 3 : rc;
   }
 
   print_banner();
