@@ -54,7 +54,7 @@ int sliver_utf8_from_acp(const char *in, char *out, size_t out_cap);
  * Blocks until the child exits (60s cap on Windows). */
 int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
                      sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
-                     uint32_t *status_out);
+                     uint32_t *status_out, uint32_t ppid);
 
 /* --- interactive child (shell tunnels) ---------------------------------- */
 typedef struct sliver_child sliver_child_t;

@@ -549,7 +549,7 @@ static int run_exec_selftest(void) {
   argv[2] = NULL;
   sliver_buf_init(&out);
   sliver_buf_init(&err);
-  rc = sliver_proc_exec("powershell.exe", argv, 2, 1, &out, &err, &pid, &status);
+  rc = sliver_proc_exec("powershell.exe", argv, 2, 1, &out, &err, &pid, &status, 0);
   LOG_INFO("exec selftest: rc=%d pid=%u status=%u out=%u bytes", rc, pid, status,
            (unsigned)out.len);
   sliver_buf_free(&out);

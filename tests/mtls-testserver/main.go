@@ -585,7 +585,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 		tunnel := sv[8]
 		_, shr := envelopeFields(sb[9])
 		fmt.Printf("SHELL ok: pid=%d tunnel=%d (client asked %d) err=%q\n", sv[3], tunnel, clientTunnel, string(shr[1]))
-		stdin := append(protoStrBytes(1, []byte("dir C:\\Windows\\System32\r\necho after-big\r\n")), appendUvarint(nil, 8<<3)...)
+		stdin := append(protoStrBytes(1, []byte("dir C:\\Windows\\System32\r\necho 中文测试\r\necho after-big\r\n")), appendUvarint(nil, 8<<3)...)
 		stdin = appendUvarint(stdin, tunnel)
 		env := makeEnvelope(53, 22, stdin)
 		st, err := sess.OpenStream()

