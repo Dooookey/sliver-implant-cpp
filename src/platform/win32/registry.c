@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Same hive names the Go implant accepts. */
@@ -297,3 +298,4 @@ int sliver_reg_read_hive(const char *root_hive, const char *requested_hive, uint
   *out_len = (size_t)size;
   return 0;
 }
+
