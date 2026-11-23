@@ -893,10 +893,12 @@ int sliver_cli_main(int argc, char **argv) {
     return 1;
   }
 
+  /* The log lock must exist in every build: worker threads log in release too,
+   * and an uninitialised g_lock used to leave their writes unsynchronised. */
+  sliver_log_init();
 #if defined(SLIVER_DEBUG_LOG) && SLIVER_DEBUG_LOG
   /* Debug builds: verbose logs, console + file, overridable through
    * SLIVER_LOG_LEVEL / SLIVER_LOG_FILE (also for injected payloads). */
-  sliver_log_init();
   sliver_log_set_level(SLIVER_LOG_DEBUG);
   sliver_log_init_from_env();
 #endif

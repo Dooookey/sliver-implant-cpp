@@ -84,7 +84,7 @@ void sliver_log_close_file(void) {
 }
 
 void sliver_log_write(sliver_log_level_t level, const char *fmt, ...) {
-  char message[1024];
+  char message[4096];
   va_list ap;
 
   if (fmt == NULL || level < g_level) {
@@ -101,10 +101,17 @@ void sliver_log_write(sliver_log_level_t level, const char *fmt, ...) {
       message[--len] = 0;
     }
   }
+  if (g_lock != NULL) {
+    sliver_mutex_lock(g_lock);
+  }
   (void)fprintf(stderr, "[%-5s] %s\n", level_name(level), message);
+  (void)fflush(stderr);
   if (g_file != NULL) {
     (void)fprintf(g_file, "[%-5s] %s\n", level_name(level), message);
     (void)fflush(g_file);
+  }
+  if (g_lock != NULL) {
+    sliver_mutex_unlock(g_lock);
   }
 }
 
