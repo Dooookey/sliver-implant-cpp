@@ -239,9 +239,9 @@ int sliver_getprivs(sliver_priv_t *out, int max, char *integrity, size_t integri
       if (label != NULL &&
           GetTokenInformation(token, TokenIntegrityLevel, label, isize, &isize)) {
         if (label->Label.Sid != NULL && IsValidSid(label->Label.Sid)) {
-          DWORD count = (DWORD)*GetSidSubAuthorityCount(label->Label.Sid);
-          if (count > 0) {
-            DWORD rid = *GetSidSubAuthority(label->Label.Sid, count - 1);
+          DWORD subauth_count = (DWORD)*GetSidSubAuthorityCount(label->Label.Sid);
+          if (subauth_count > 0) {
+            DWORD rid = *GetSidSubAuthority(label->Label.Sid, subauth_count - 1);
             (void)snprintf(integrity, integrity_cap, "%s", integrity_name(rid));
           }
         }

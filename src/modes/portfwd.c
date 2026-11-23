@@ -105,6 +105,24 @@ void sliver_portfwd_shutdown(void) {
   portfwd_unlock();
 }
 
+/* Gap recovery: ask the peer to resend from read_sequence (mirrors shell.c). */
+static int forward_resend(portfwd_t *f) {
+  sliver_buf_t msg;
+  int rc;
+
+  if (g_send == NULL) {
+    return -1;
+  }
+  sliver_buf_init(&msg);
+  if (sliver_tunnel_resend_encode(&msg, f->sequence, f->id, f->read_sequence) != 0) {
+    sliver_buf_free(&msg);
+    return -1;
+  }
+  rc = g_send(SLIVER_MSG_TUNNEL_DATA, msg.data, msg.len);
+  sliver_buf_free(&msg);
+  return rc;
+}
+
 static int forward_send_data(portfwd_t *f, const void *data, size_t len, int closed) {
   sliver_buf_t msg;
   int rc;
@@ -373,6 +391,12 @@ int sliver_portfwd_tunnel_data(const sliver_tunnel_data_t *td) {
       return 1;
     }
     f->read_sequence++;
+  } else if (td->sequence > f->read_sequence) {
+    /* Out-of-order frame: request the missing bytes instead of silently dropping
+     * them (the shell path already does this; portfwd used to lose the frame). */
+    LOG_DEBUG("portfwd: gap id=%llu want=%llu got=%llu", (unsigned long long)f->id,
+              (unsigned long long)f->read_sequence, (unsigned long long)td->sequence);
+    (void)forward_resend(f);
   }
   return 1;
 }
