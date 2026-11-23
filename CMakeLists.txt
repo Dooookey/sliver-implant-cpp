@@ -136,6 +136,7 @@ if(IMPLANT_CRYPTO)
     src/wire/frame.c
     src/wire/yamux.c
     src/modes/session.c
+    src/modes/implant.c
     src/rpc/dispatch.c
     src/modes/shell.c
     src/modes/portfwd.c)
@@ -177,7 +178,10 @@ if(IMPLANT_FORMAT STREQUAL "exe")
 elseif(IMPLANT_FORMAT STREQUAL "shared")
   add_library(implant SHARED src/entry/dllmain.c)
   target_link_libraries(implant PRIVATE sliver_core)
-  target_compile_definitions(implant PRIVATE IMPLANT_BUILD_DLL=1)
+  target_compile_definitions(implant PRIVATE IMPLANT_BUILD_DLL=1 _CRT_SECURE_NO_WARNINGS)
+  if(IMPLANT_CRYPTO)
+    target_compile_definitions(implant PRIVATE IMPLANT_CRYPTO_ENABLED=1)
+  endif()
   sliver_apply_warnings(implant)
   set_target_properties(implant PROPERTIES PREFIX "" OUTPUT_NAME "implant")
 else()
@@ -193,6 +197,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 
