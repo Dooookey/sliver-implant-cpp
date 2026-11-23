@@ -26,6 +26,7 @@ typedef struct {
   sliver_frame_signer_t *signer;
   sliver_mutex_t *tx_lock;
   volatile int stop;
+  volatile int closed;
 } session_tx_t;
 
 static long stream_read(void *ctx, void *buf, size_t len) {
@@ -62,6 +63,15 @@ static int send_envelope(session_tx_t *tx, const void *envelope, size_t len) {
 
   if (tx->tx_lock != NULL) {
     sliver_mutex_lock(tx->tx_lock);
+  }
+  if (tx->closed) {
+    /* The session is tearing down: the yamux/signer pointers may already be
+     * stale. Never touch them after this flag is set (teardown sets it under the
+     * same lock before freeing the connection resources). */
+    if (tx->tx_lock != NULL) {
+      sliver_mutex_unlock(tx->tx_lock);
+    }
+    return -1;
   }
   if (sliver_yamux_open(tx->y, &sid) != 0) {
     if (!tx->stop && !tx->y->failed) {
@@ -172,8 +182,10 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   sliver_frame_signer_t signer;
   sliver_buf_t reg_buf, env_buf;
   sliver_register_t reg;
-  session_tx_t tx;
-  sliver_mutex_t *tx_lock = NULL;
+  /* Static: detached workers may hold a stale &tx past this function's return,
+   * so the sender object must outlive the session frame (see teardown). */
+  static session_tx_t tx;
+  static sliver_mutex_t *tx_lock = NULL;
   sliver_thread_t *heartbeat = NULL;
   char err[256];
   int rc = -1;
@@ -211,11 +223,14 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   }
   yamux_ready = 1;
 
-  tx_lock = sliver_mutex_create();
+  if (tx_lock == NULL) {
+    tx_lock = sliver_mutex_create();
+  }
   tx.y = &yamux;
   tx.signer = &signer;
   tx.tx_lock = tx_lock;
   tx.stop = 0;
+  tx.closed = 0;
   g_tx = &tx;
   sliver_shell_set_sender(shell_send_adapter);
   sliver_portfwd_set_sender(shell_send_adapter);
@@ -316,7 +331,19 @@ out:
   tx.stop = 1;
   sliver_shell_shutdown();
   sliver_portfwd_shutdown();
-  g_tx = NULL;
+  /* Mark the sender closed under the lock so any in-flight send_envelope finishes
+   * first, then null the pointers it would otherwise touch after the yamux/signer
+   * below are freed. */
+  if (tx.tx_lock != NULL) {
+    sliver_mutex_lock(tx.tx_lock);
+    tx.closed = 1;
+    tx.y = NULL;
+    tx.signer = NULL;
+    g_tx = NULL;
+    sliver_mutex_unlock(tx.tx_lock);
+  } else {
+    g_tx = NULL;
+  }
   if (heartbeat != NULL) {
     (void)sliver_thread_join(heartbeat);
     heartbeat = NULL;
