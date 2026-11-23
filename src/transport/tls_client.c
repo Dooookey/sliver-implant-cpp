@@ -440,8 +440,7 @@ long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {
       break;
     }
     /* mbedTLS wants to read a post-handshake record (TLS 1.3 KeyUpdate, alert,
-     * close_notify) before it can write. Drain it once, then retry the write;
-     * otherwise the same bytes are retried forever and the send fails. */
+     * close_notify) before it can write. Drain it once, then retry. */
     {
       unsigned char scratch[512];
       int rr = mbedtls_ssl_read(&conn->ssl, scratch, sizeof(scratch));
@@ -453,7 +452,6 @@ long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {
         rc = -1; /* fatal */
         break;
       }
-      /* consumed a record (KeyUpdate/alert): loop back to retry the write */
     }
   }
   if (conn->io_lock != NULL) {
@@ -461,6 +459,10 @@ long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {
   }
   if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
     return -2; /* retry later, nothing was sent */
+  }
+  if (rc < 0) {
+    LOG_DEBUG("tls: mbedtls_ssl_write failed rc=-0x%04x (%u bytes)", (unsigned)(-rc),
+              (unsigned)len);
   }
   return rc < 0 ? -1 : (long)rc;
 }
