@@ -138,6 +138,7 @@ if(IMPLANT_CRYPTO)
     src/wire/frame.c
     src/wire/yamux.c
     src/modes/session.c
+    src/modes/beacon.c
     src/modes/implant.c
     src/rpc/dispatch.c
     src/modes/shell.c
