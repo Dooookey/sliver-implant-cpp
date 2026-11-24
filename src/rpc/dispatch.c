@@ -491,8 +491,9 @@ static int handle_cp_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
                    "cp: path separators were lost before the implant saw them; "
                    "escape backslashes (C:\\\\Windows\\\\win.ini)");
   } else if (sliver_fs_copy(src, dst, &written) != 0) {
-    (void)snprintf(err, sizeof(err), "cp %s -> %s: %s", src, dst,
-                   strerror(sliver_fs_last_error()));
+    char fserr[256];
+    (void)sliver_fs_error_message(fserr, sizeof(fserr));
+    (void)snprintf(err, sizeof(err), "cp %s -> %s: %s", src, dst, fserr);
   }
   LOG_DEBUG("rpc: cp %s -> %s (%lld bytes)", src, dst, (long long)written);
   return sliver_cp_encode(out, src, dst, written, err);
@@ -514,8 +515,9 @@ static int handle_mv_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
                    "mv: path separators were lost before the implant saw them; "
                    "escape backslashes (C:\\\\Windows\\\\win.ini)");
   } else if (sliver_fs_move(src, dst) != 0) {
-    (void)snprintf(err, sizeof(err), "mv %s -> %s: %s", src, dst,
-                   strerror(sliver_fs_last_error()));
+    char fserr[256];
+    (void)sliver_fs_error_message(fserr, sizeof(fserr));
+    (void)snprintf(err, sizeof(err), "mv %s -> %s: %s", src, dst, fserr);
   }
   LOG_DEBUG("rpc: mv %s -> %s", src, dst);
   return sliver_mv_encode(out, src, dst, err);
@@ -533,7 +535,9 @@ static int handle_chmod_entry(const sliver_envelope_t *req, sliver_buf_t *out) {
   }
   err[0] = 0;
   if (sliver_fs_chmod(path, mode, recursive) != 0) {
-    (void)snprintf(err, sizeof(err), "chmod %s %s: failed", path, mode);
+    char fserr[256];
+    (void)sliver_fs_error_message(fserr, sizeof(fserr));
+    (void)snprintf(err, sizeof(err), "chmod %s %s: %s", path, mode, fserr);
   }
   return sliver_path_resp_encode(out, path, err);
 }
@@ -549,7 +553,9 @@ static int handle_chtimes_entry(const sliver_envelope_t *req, sliver_buf_t *out)
   }
   err[0] = 0;
   if (sliver_fs_settimes(path, atime, mtime) != 0) {
-    (void)snprintf(err, sizeof(err), "chtimes %s: failed", path);
+    char fserr[256];
+    (void)sliver_fs_error_message(fserr, sizeof(fserr));
+    (void)snprintf(err, sizeof(err), "chtimes %s: %s", path, fserr);
   }
   return sliver_path_resp_encode(out, path, err);
 }

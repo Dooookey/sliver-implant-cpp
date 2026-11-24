@@ -737,7 +737,9 @@ static int run_mount_selftest(void) {
 static int run_cp_selftest(const char *src, const char *dst) {
   int64_t written = 0;
   if (sliver_fs_copy(src, dst, &written) != 0) {
-    LOG_ERROR("cp selftest: %s -> %s failed: %s", src, dst, strerror(sliver_fs_last_error()));
+    char fserr[256];
+    (void)sliver_fs_error_message(fserr, sizeof(fserr));
+    LOG_ERROR("cp selftest: %s -> %s failed: %s", src, dst, fserr);
     return 1;
   }
   LOG_INFO("cp selftest: %s -> %s ok (%lld bytes)", src, dst, (long long)written);

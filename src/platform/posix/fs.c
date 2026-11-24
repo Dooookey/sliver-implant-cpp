@@ -14,6 +14,14 @@
 #include <utime.h>
 #include <unistd.h>
 
+int sliver_fs_error_message(char *buf, size_t cap) {
+  if (buf == NULL || cap == 0) {
+    return -1;
+  }
+  (void)snprintf(buf, cap, "%s", strerror(sliver_fs_last_error()));
+  return 0;
+}
+
 static void mode_string(mode_t mode, char *out, size_t cap) {
   if (cap < 11) {
     if (cap > 0) {
@@ -197,6 +205,7 @@ int sliver_fs_move(const char *src, const char *dst) {
   if (rename(src, dst) == 0) {
     return 0;
   }
+  sliver_fs_set_error(errno);
   {
     int64_t written = 0;
     if (sliver_fs_copy(src, dst, &written) != 0) {
@@ -217,7 +226,11 @@ int sliver_fs_chmod(const char *path, const char *mode, int recursive) {
   if (end == mode) {
     return -1;
   }
-  return chmod(path, (mode_t)parsed) == 0 ? 0 : -1;
+  if (chmod(path, (mode_t)parsed) != 0) {
+    sliver_fs_set_error(errno);
+    return -1;
+  }
+  return 0;
 }
 
 int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
@@ -227,7 +240,11 @@ int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
   }
   times.actime = (time_t)atime;
   times.modtime = (time_t)mtime;
-  return utime(path, &times) == 0 ? 0 : -1;
+  if (utime(path, &times) != 0) {
+    sliver_fs_set_error(errno);
+    return -1;
+  }
+  return 0;
 }
 
 

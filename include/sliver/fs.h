@@ -46,8 +46,14 @@ int64_t sliver_fs_size(const char *path);
 
 /* --- P1.2 file operations ---------------------------------------------- */
 int sliver_fs_copy(const char *src, const char *dst, int64_t *written);
-/* errno of the last sliver_fs_copy failure. */
+/* Error code (errno on POSIX, Win32 error on Windows) of the last fs failure. */
 int sliver_fs_last_error(void);
+/* Records the last error code (used by platform fs implementations). */
+void sliver_fs_set_error(int code);
+/* Formats the last fs error into a human-readable message, matching the Go
+ * implant's os-package wording (Win32 FormatMessage on Windows, strerror on
+ * POSIX). Returns 0 on success. */
+int sliver_fs_error_message(char *buf, size_t cap);
 int sliver_fs_move(const char *src, const char *dst);
 int sliver_fs_chmod(const char *path, const char *mode, int recursive);
 int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime);

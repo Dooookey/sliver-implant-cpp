@@ -9,6 +9,21 @@
 #endif
 #include <windows.h>
 
+int sliver_fs_error_message(char *buf, size_t cap) {
+  DWORD code = (DWORD)sliver_fs_last_error();
+  DWORD n;
+  if (buf == NULL || cap == 0) {
+    return -1;
+  }
+  buf[0] = '\0';
+  n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+                     code, 0, buf, (DWORD)cap, NULL);
+  if (n == 0) {
+    (void)snprintf(buf, cap, "error %lu", (unsigned long)code);
+  }
+  return 0;
+}
+
 static void mode_string(DWORD attrs, int is_dir, char *out, size_t cap) {
   /* Go reports "drwxrwxrwx" for directories and "-rw-rw-rw-" for files on
    * Windows (permission bits are synthesized). */
@@ -196,6 +211,7 @@ int sliver_fs_move(const char *src, const char *dst) {
   if (MoveFileExA(src, dst, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
     return 0;
   }
+  sliver_fs_set_error((int)GetLastError());
   {
     /* Cross-volume fallback: copy then delete. */
     int64_t written = 0;
@@ -215,9 +231,14 @@ int sliver_fs_chmod(const char *path, const char *mode, int recursive) {
   }
   attrs = GetFileAttributesA(path);
   if (attrs == INVALID_FILE_ATTRIBUTES) {
+    sliver_fs_set_error((int)GetLastError());
     return -1;
   }
-  return SetFileAttributesA(path, attrs) ? 0 : -1;
+  if (!SetFileAttributesA(path, attrs)) {
+    sliver_fs_set_error((int)GetLastError());
+    return -1;
+  }
+  return 0;
 }
 
 int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
@@ -233,6 +254,7 @@ int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
   h = CreateFileA(path, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                   OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
   if (h == INVALID_HANDLE_VALUE) {
+    sliver_fs_set_error((int)GetLastError());
     return -1;
   }
   ua.QuadPart = (uint64_t)((atime + 11644473600LL) * 10000000LL);
@@ -242,6 +264,7 @@ int sliver_fs_settimes(const char *path, int64_t atime, int64_t mtime) {
   ft_m.dwLowDateTime = um.LowPart;
   ft_m.dwHighDateTime = um.HighPart;
   if (!SetFileTime(h, NULL, &ft_a, &ft_m)) {
+    sliver_fs_set_error((int)GetLastError());
     (void)CloseHandle(h);
     return -1;
   }
