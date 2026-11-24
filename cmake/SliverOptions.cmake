@@ -9,7 +9,10 @@ set(SLIVER_CONFIG_JSON "${CMAKE_CURRENT_LIST_DIR}/../config/dev.json"
 option(IMPLANT_DEBUG_LOG   "Compile in debug logging (replaces {{if .Config.Debug}})" OFF)
 option(IMPLANT_GUI         "Windows GUI subsystem (equivalent of -H=windowsgui)"    OFF)
 option(IMPLANT_WERROR      "Treat warnings as errors"                               OFF)
-option(IMPLANT_LTO         "Enable link time optimisation (size)"                   ON)
+# LTO is OFF by default: /GL + /LTCG on a C implant that links the vendored
+# mbedTLS proved able to produce artifacts that link but misbehave at runtime
+# (TLS handshake failures), so size optimisation must not be the default.
+option(IMPLANT_LTO         "Enable link time optimisation (size)"                   OFF)
 option(IMPLANT_STRIP       "Strip symbols and section garbage (size)"               ON)
 option(IMPLANT_STATIC_CRT  "Link the C runtime statically (/MT, -static-libgcc)"    ON)
 option(IMPLANT_STATIC_LINK "Fully static ELF link (-static); exe only"              ON)

