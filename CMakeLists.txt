@@ -166,6 +166,14 @@ target_compile_definitions(sliver_core PRIVATE _CRT_SECURE_NO_WARNINGS
 # 3) Artifact(s)
 # ---------------------------------------------------------------------------
 if(IMPLANT_FORMAT STREQUAL "exe")
+  # tls/frame/yamux/session/beacon are gated on IMPLANT_CRYPTO. Building an exe
+  # without them yields a binary that starts, does nothing and never connects,
+  # which cannot be diagnosed from the artifact itself: fail at configure time.
+  if(NOT IMPLANT_CRYPTO)
+    message(FATAL_ERROR
+      "IMPLANT_CRYPTO=OFF cannot produce a runnable exe implant (the TLS/yamux/"
+      "session/beacon sources are gated on it). Use -DIMPLANT_CRYPTO=ON (default).")
+  endif()
   add_executable(implant src/entry/main.c)
   if(IMPLANT_CRYPTO)
     target_compile_definitions(implant PRIVATE IMPLANT_CRYPTO_ENABLED=1 _CRT_SECURE_NO_WARNINGS)

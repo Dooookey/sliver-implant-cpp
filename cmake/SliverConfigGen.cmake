@@ -60,8 +60,10 @@ endif()
 _cfg_get(SLIVER_BEACON    beacon     "false")
 _cfg_get(SLIVER_POLL      poll_timeout "0")
 
+# string(JSON GET) returns CMake's boolean spelling (ON/OFF) for a JSON boolean,
+# not "true"/"false", so compare by CMake truthiness.
 set(_beacon 0)
-if(SLIVER_BEACON STREQUAL "true" OR SLIVER_BEACON STREQUAL "TRUE" OR SLIVER_BEACON STREQUAL "1")
+if(SLIVER_BEACON)
   set(_beacon 1)
 endif()
 
