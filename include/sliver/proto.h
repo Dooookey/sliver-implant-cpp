@@ -356,6 +356,21 @@ int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout
 #define SLIVER_MSG_PORTFWD 81u
 #define SLIVER_MSG_BEACON_REGISTER 93u
 #define SLIVER_MSG_BEACON_TASKS 94u
+
+/* --- beacon (MsgBeaconRegister / MsgBeaconTasks) -------------------------- */
+/* BeaconRegister{ID=1, Interval=2, Jitter=3, Register=4, NextCheckin=5}. */
+int sliver_beacon_register_encode(sliver_buf_t *out, const char *id, int64_t interval,
+                                  int64_t jitter, const sliver_register_t *reg,
+                                  int64_t next_checkin);
+/* BeaconTasks{ID=1, Tasks=2 repeated Envelope, NextCheckin=3}. `tasks` are
+ * pre-encoded envelope buffers. */
+int sliver_beacon_tasks_encode(sliver_buf_t *out, const char *id, int64_t next_checkin,
+                               const sliver_buf_t *const *tasks, size_t task_count);
+/* Decodes BeaconTasks into id/next_checkin and an array of envelopes (caller
+ * frees each via sliver_envelope_free). Returns 0 and *count on success. */
+int sliver_beacon_tasks_decode(const void *data, size_t len, char *id, size_t id_cap,
+                               int64_t *next_checkin, sliver_envelope_t *tasks,
+                               size_t task_cap, size_t *task_count);
 /* Request/response pairs used by the Windows/privilege/service/registry handlers.
  * Several services answer on the request type id (no distinct response constant in
  * constants.go), so those macros repeat the value intentionally. */
