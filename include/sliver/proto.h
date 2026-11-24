@@ -276,6 +276,12 @@ int sliver_tunnel_close_encode(sliver_buf_t *out, uint64_t terminal_sequence,
 int sliver_tunnel_resend_encode(sliver_buf_t *out, uint64_t sequence, uint64_t tunnel_id,
                                 uint64_t ack);
 #define SLIVER_EXEC_MAX_ARGS 32
+#define SLIVER_EXEC_MAX_ENV 32
+
+typedef struct {
+  char key[256];
+  char value[1024];
+} sliver_exec_env_t;
 
 typedef struct {
   char path[1024];
@@ -286,9 +292,11 @@ typedef struct {
   char stdout_path[1024];
   char stderr_path[1024];
   int32_t ppid;
+  sliver_exec_env_t env[SLIVER_EXEC_MAX_ENV];
+  size_t env_count;
 } sliver_execute_req_t;
 
-/* ExecuteReq{Path=1,Args=2,Output=3,EnvInheritance=6,Background=8}. */
+/* ExecuteReq{Path=1,Args=2,Output=3,EnvInheritance=6,Env=7,Background=8,PPid=10}. */
 int sliver_execute_req_decode(const void *data, size_t len, sliver_execute_req_t *out);
 /* Execute{Status=1,Stdout=2,Stderr=3,Pid=4,Response=9}. */
 int sliver_execute_encode(sliver_buf_t *out, uint32_t status, const void *stdout_data,

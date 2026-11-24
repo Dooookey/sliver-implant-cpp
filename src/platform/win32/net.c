@@ -300,6 +300,49 @@ int sliver_net_sockets(sliver_sock_t *out, int max) {
     count++;
   }
   free(table);
+
+  /* UDP: stateless, so no remote address/state; report the owning pid + exe. */
+  {
+    MIB_UDPTABLE_OWNER_PID *utable;
+    DWORD usize = 0;
+    if (GetExtendedUdpTable(NULL, &usize, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0) ==
+            ERROR_INSUFFICIENT_BUFFER &&
+        usize != 0) {
+      utable = (MIB_UDPTABLE_OWNER_PID *)malloc(usize);
+      if (utable != NULL) {
+        if (GetExtendedUdpTable(utable, &usize, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0) ==
+            NO_ERROR) {
+          for (DWORD i = 0; i < utable->dwNumEntries && count < max; ++i) {
+            MIB_UDPROW_OWNER_PID *row = &utable->table[i];
+            sliver_sock_t *e = &out[count];
+            memset(e, 0, sizeof(*e));
+            format_v4(row->dwLocalAddr, e->local_ip, sizeof(e->local_ip));
+            e->local_port = (uint32_t)ntohs((u_short)row->dwLocalPort);
+            (void)snprintf(e->remote_ip, sizeof(e->remote_ip), "%s", "0.0.0.0");
+            e->remote_port = 0;
+            e->state[0] = '\0';
+            e->pid = (int32_t)row->dwOwningPid;
+            (void)snprintf(e->proto, sizeof(e->proto), "%s", "udp");
+            if (snap != INVALID_HANDLE_VALUE && e->pid > 0) {
+              PROCESSENTRY32 pe;
+              pe.dwSize = sizeof(pe);
+              if (Process32First(snap, &pe)) {
+                do {
+                  if (pe.th32ProcessID == (DWORD)e->pid) {
+                    (void)snprintf(e->exe, sizeof(e->exe), "%s", pe.szExeFile);
+                    break;
+                  }
+                } while (Process32Next(snap, &pe));
+              }
+            }
+            count++;
+          }
+        }
+        free(utable);
+      }
+    }
+  }
+
   if (snap != INVALID_HANDLE_VALUE) {
     (void)CloseHandle(snap);
   }

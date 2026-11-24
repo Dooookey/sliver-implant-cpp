@@ -549,7 +549,7 @@ static int run_exec_selftest(void) {
   argv[2] = NULL;
   sliver_buf_init(&out);
   sliver_buf_init(&err);
-  rc = sliver_proc_exec("powershell.exe", argv, 2, 1, &out, &err, &pid, &status, 0);
+  rc = sliver_proc_exec("powershell.exe", argv, 2, 1, &out, &err, &pid, &status, 0, NULL, 0);
   LOG_INFO("exec selftest: rc=%d pid=%u status=%u out=%u bytes", rc, pid, status,
            (unsigned)out.len);
   sliver_buf_free(&out);
@@ -694,8 +694,8 @@ static int run_registry_selftest(void) {
 #endif
 
 static int run_netstat_selftest(void) {
-  sliver_sock_t socks[64];
-  int n = sliver_net_sockets(socks, 64);
+  sliver_sock_t socks[256];
+  int n = sliver_net_sockets(socks, 256);
   int i;
   if (n <= 0) {
     LOG_ERROR("netstat selftest: no sockets (%d)", n);
@@ -706,7 +706,15 @@ static int run_netstat_selftest(void) {
              (unsigned)socks[i].local_port, socks[i].remote_ip, (unsigned)socks[i].remote_port,
              socks[i].state, socks[i].pid);
   }
-  LOG_INFO("netstat selftest: %d entries", n);
+  {
+    int udp = 0;
+    for (i = 0; i < n; ++i) {
+      if (strcmp(socks[i].proto, "udp") == 0) {
+        udp++;
+      }
+    }
+    LOG_INFO("netstat selftest: %d entries (tcp=%d udp=%d)", n, n - udp, udp);
+  }
   return 0;
 }
 

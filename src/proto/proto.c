@@ -800,6 +800,32 @@ int sliver_execute_req_decode(const void *data, size_t len, sliver_execute_req_t
       if (sliver_reader_string(&r, out->stderr_path, sizeof(out->stderr_path)) != 0) {
         return -1;
       }
+    } else if (field == 7 && wire == 2 && out->env_count < SLIVER_EXEC_MAX_ENV) {
+      /* Env = repeated commonpb.EnvVar{Key=1,Value=2}. */
+      const uint8_t *ev_data;
+      size_t ev_len;
+      sliver_reader_t ev;
+      uint32_t ef, ew;
+      if (sliver_reader_bytes(&r, &ev_data, &ev_len) != 0) {
+        return -1;
+      }
+      sliver_reader_init(&ev, ev_data, ev_len);
+      while (sliver_reader_next(&ev, &ef, &ew) == 0) {
+        if (ef == 1 && ew == 2) {
+          if (sliver_reader_string(&ev, out->env[out->env_count].key,
+                                   sizeof(out->env[0].key)) != 0) {
+            return -1;
+          }
+        } else if (ef == 2 && ew == 2) {
+          if (sliver_reader_string(&ev, out->env[out->env_count].value,
+                                   sizeof(out->env[0].value)) != 0) {
+            return -1;
+          }
+        } else if (sliver_reader_skip(&ev, ew) != 0) {
+          return -1;
+        }
+      }
+      out->env_count++;
     } else if (field == 8 && wire == 0) {
       uint64_t v;
       if (sliver_reader_varint(&r, &v) != 0) {

@@ -51,10 +51,12 @@ int sliver_acp_from_utf8(const char *in, size_t in_len, char *out, size_t out_ca
 int sliver_utf8_from_acp(const char *in, char *out, size_t out_cap);
 
 /* Runs `path` with `args`, capturing stdout/stderr when capture != 0.
- * Blocks until the child exits (60s cap on Windows). */
+ * Blocks until the child exits (60s cap on Windows). When env_count > 0, `env`
+ * overrides/inherits the parent environment (mirrors the Go implant). */
 int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
                      sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
-                     uint32_t *status_out, uint32_t ppid);
+                     uint32_t *status_out, uint32_t ppid,
+                     const sliver_exec_env_t *env, size_t env_count);
 
 /* --- interactive child (shell tunnels) ---------------------------------- */
 typedef struct sliver_child sliver_child_t;

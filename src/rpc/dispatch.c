@@ -323,6 +323,8 @@ typedef struct {
   char stdout_path[1024];
   char stderr_path[1024];
   uint32_t ppid;
+  sliver_exec_env_t env[SLIVER_EXEC_MAX_ENV];
+  size_t env_count;
   int64_t envelope_id;
 } exec_job_t;
 
@@ -359,7 +361,7 @@ static void execute_worker(void *arg) {
         start_err = "execute: cannot start process";
       }
     } else if (sliver_proc_exec(job->path, argv, job->argc, job->output, &out_buf, &err_buf,
-                                &pid, &status, job->ppid) != 0) {
+                                &pid, &status, job->ppid, job->env, job->env_count) != 0) {
       /* Only a failure to *start* the child is an error: a non-zero exit code is
        * reported through Status like the Go implant does. */
       status = 1;
@@ -416,6 +418,11 @@ int sliver_rpc_execute_async(const sliver_envelope_t *req) {
   job->output = ex.output;
   job->background = ex.background;
   job->ppid = ex.ppid > 0 ? (uint32_t)ex.ppid : 0u;
+  job->env_count = ex.env_count;
+  for (size_t i = 0; i < ex.env_count; ++i) {
+    (void)snprintf(job->env[i].key, sizeof(job->env[i].key), "%s", ex.env[i].key);
+    (void)snprintf(job->env[i].value, sizeof(job->env[i].value), "%s", ex.env[i].value);
+  }
   (void)snprintf(job->stdout_path, sizeof(job->stdout_path), "%s", ex.stdout_path);
   (void)snprintf(job->stderr_path, sizeof(job->stderr_path), "%s", ex.stderr_path);
   job->envelope_id = req->id;

