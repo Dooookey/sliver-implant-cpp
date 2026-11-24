@@ -118,6 +118,7 @@ set(SLIVER_CORE_SOURCES
   src/core/log.c
   src/core/fileio.c
   src/proto/proto.c
+  src/proto/domain_enc.c
   src/platform/${SLIVER_PLATFORM_DIR}/thread.c
   src/platform/${SLIVER_PLATFORM_DIR}/net.c
   src/platform/${SLIVER_PLATFORM_DIR}/fs.c
