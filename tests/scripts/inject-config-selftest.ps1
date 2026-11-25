@@ -154,9 +154,9 @@ if ($Beacon) {
     $rc = 1
     Write-Host "    MISSING: BEACON CHECKIN ok"
   }
-  if ($log -notmatch "BEACON CHECKIN ok: tasks=1") {
+  if ($log -notmatch "BEACON CHECKIN ok: tasks=2") {
     $rc = 1
-    Write-Host "    MISSING: BEACON CHECKIN ok: tasks=1 (task dispatch/result queue)"
+    Write-Host "    MISSING: BEACON CHECKIN ok: tasks=2 (ls result + refused shell)" 
   }
 }
 

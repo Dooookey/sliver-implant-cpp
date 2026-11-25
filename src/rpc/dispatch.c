@@ -332,6 +332,14 @@ static sliver_rpc_send_fn g_rpc_send = NULL;
 
 void sliver_rpc_set_sender(sliver_rpc_send_fn fn) { g_rpc_send = fn; }
 
+/* Default is "full" so a scheduler that never calls the setter behaves exactly
+ * as before (session). The beacon clears SLIVER_CAP_TUNNEL. */
+static unsigned g_rpc_caps = SLIVER_CAP_TUNNEL;
+
+void sliver_rpc_set_capabilities(unsigned caps) { g_rpc_caps = caps; }
+
+int sliver_rpc_has_capability(unsigned cap) { return (g_rpc_caps & cap) != 0; }
+
 static void execute_worker(void *arg) {
   exec_job_t *job = (exec_job_t *)arg;
   const char *argv[SLIVER_EXEC_MAX_ARGS];

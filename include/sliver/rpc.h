@@ -68,6 +68,19 @@ void sliver_rpc_set_sender(sliver_rpc_send_fn fn);
 /* Returns 0 when the work was handed to a worker thread (no immediate reply). */
 int sliver_rpc_execute_async(const sliver_envelope_t *req);
 
+/* --- capabilities ---------------------------------------------------------
+ * A few handlers need a live duplex link to the operator: shell (a child whose
+ * output streams through a tunnel), tunnel data/close, shell resize and port
+ * forwarding. A beacon cannot serve those - the client would block forever
+ * waiting for frames it can never get - so they are refused up front instead.
+ *
+ * Each scheduler declares its capabilities at startup. The default is "full"
+ * so any code path that does not call the setter (and therefore every session
+ * build) keeps the previous behaviour. */
+#define SLIVER_CAP_TUNNEL 0x1u
+void sliver_rpc_set_capabilities(unsigned caps);
+int sliver_rpc_has_capability(unsigned cap);
+
 #ifdef __cplusplus
 }
 #endif

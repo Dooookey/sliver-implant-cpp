@@ -306,19 +306,24 @@ func handleBeacon(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519
 		fmt.Printf("BEACON CHECKIN ok: tasks=%d\n", tasks)
 		if tasks == 0 && atomic.CompareAndSwapInt32(&beaconTaskInjected, 0, 1) {
 			id := string(bb[1])
-			task := makeEnvelope(7, 5, protoStr(1, "."))
+			// Two tasks: an `ls` (must succeed) and a `shell` (must be refused by
+			// the implant's capability gate rather than hanging).
+			lsTask := makeEnvelope(7, 5, protoStr(1, "."))
+			shellTask := makeEnvelope(8, 20, protoStr(1, "cmd.exe"))
 			var bt []byte
 			bt = append(bt, protoStr(1, id)...)
-			bt = append(bt, appendUvarint(nil, 2<<3|2)...)
-			bt = appendUvarint(bt, uint64(len(task)))
-			bt = append(bt, task...)
+			for _, task := range [][]byte{lsTask, shellTask} {
+				bt = append(bt, appendUvarint(nil, 2<<3|2)...)
+				bt = appendUvarint(bt, uint64(len(task)))
+				bt = append(bt, task...)
+			}
 			bt = append(bt, appendUvarint(nil, 3<<3)...)
 			bt = appendUvarint(bt, 1)
 			reply := makeEnvelope(0, 94, bt)
 			if rs, rerr := sess.OpenStream(); rerr == nil {
 				_ = writeFrame(rs, rawSignature(serverPriv, serverPub, reply), reply)
 				_ = rs.Close()
-				fmt.Printf("BEACON TASK sent: type=5 id=7\n")
+				fmt.Printf("BEACON TASKS sent: ls(type=5,id=7) shell(type=20,id=8)\n")
 			} else {
 				log.Printf("beacon reply stream: %v", rerr)
 			}

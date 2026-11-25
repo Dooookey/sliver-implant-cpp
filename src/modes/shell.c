@@ -379,6 +379,12 @@ int sliver_rpc_handle_shell(const sliver_envelope_t *req, sliver_buf_t *out) {
   if (sliver_shell_req_decode(req->data, req->data_len, &sr) != 0) {
     return -1;
   }
+  /* Beacon mode has no duplex link: refuse instead of spawning a child whose
+   * output could never reach the operator (the client would block forever). */
+  if (!sliver_rpc_has_capability(SLIVER_CAP_TUNNEL)) {
+    return sliver_shell_encode(out, sr.path, 0, 0, 0,
+                               "shell is not available in beacon mode");
+  }
   argc = build_shell_argv(sr.path, argv, shell_path, sizeof(shell_path));
   err[0] = '\0';
   if (sliver_child_spawn(shell_path, argv, argc, &child, &pid) != 0) {
