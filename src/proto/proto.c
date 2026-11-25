@@ -1408,3 +1408,96 @@ int sliver_reg_hive_encode(sliver_buf_t *out, const uint8_t *data, size_t len, c
   }
   return encode_response(out, err);
 }
+
+/* --- beacon (BeaconRegister / BeaconTasks) ------------------------------- */
+
+int sliver_beacon_register_encode(sliver_buf_t *out, const char *id, int64_t interval,
+                                  int64_t jitter, const sliver_register_t *reg,
+                                  int64_t next_checkin) {
+  sliver_buf_t reg_buf;
+  int rc = -1;
+
+  if (out == NULL || id == NULL || reg == NULL) {
+    return -1;
+  }
+  sliver_buf_init(&reg_buf);
+  if (sliver_register_encode(&reg_buf, reg) != 0) {
+    goto done;
+  }
+  if (sliver_buf_put_string(out, 1, id) != 0 ||
+      sliver_buf_put_int64(out, 2, interval) != 0 ||
+      sliver_buf_put_int64(out, 3, jitter) != 0 ||
+      sliver_buf_put_bytes(out, 4, reg_buf.data, reg_buf.len) != 0 ||
+      sliver_buf_put_int64(out, 5, next_checkin) != 0) {
+    goto done;
+  }
+  rc = 0;
+done:
+  sliver_buf_free(&reg_buf);
+  return rc;
+}
+
+int sliver_beacon_tasks_encode(sliver_buf_t *out, const char *id, int64_t next_checkin,
+                               const sliver_buf_t *tasks, size_t task_count) {
+  size_t i;
+
+  if (out == NULL || id == NULL) {
+    return -1;
+  }
+  if (sliver_buf_put_string(out, 1, id) != 0) {
+    return -1;
+  }
+  for (i = 0; i < task_count; ++i) {
+    if (tasks != NULL && tasks[i].data != NULL && tasks[i].len != 0 &&
+        sliver_buf_put_bytes(out, 2, tasks[i].data, tasks[i].len) != 0) {
+      return -1;
+    }
+  }
+  return sliver_buf_put_int64(out, 3, next_checkin);
+}
+
+int sliver_beacon_tasks_decode(const void *data, size_t len, char *id, size_t id_cap,
+                               int64_t *next_checkin, sliver_envelope_t *tasks,
+                               size_t task_cap, size_t *task_count) {
+  sliver_reader_t r;
+  uint32_t field, wire;
+  int rc;
+  size_t count = 0;
+
+  if (data == NULL || id == NULL || id_cap == 0 || next_checkin == NULL ||
+      task_count == NULL) {
+    return -1;
+  }
+  id[0] = '\0';
+  *next_checkin = 0;
+  *task_count = 0;
+  sliver_reader_init(&r, data, len);
+  while ((rc = sliver_reader_next(&r, &field, &wire)) == 0) {
+    if (field == 1 && wire == 2) {
+      if (sliver_reader_string(&r, id, id_cap) != 0) {
+        return -1;
+      }
+    } else if (field == 2 && wire == 2) {
+      const uint8_t *d = NULL;
+      size_t l = 0;
+      if (sliver_reader_bytes(&r, &d, &l) != 0) {
+        return -1;
+      }
+      if (tasks != NULL && count < task_cap) {
+        if (sliver_envelope_decode(d, l, &tasks[count]) == 0) {
+          count++;
+        }
+      }
+    } else if (field == 3 && wire == 0) {
+      uint64_t v;
+      if (sliver_reader_varint(&r, &v) != 0) {
+        return -1;
+      }
+      *next_checkin = (int64_t)v;
+    } else if (sliver_reader_skip(&r, wire) != 0) {
+      return -1;
+    }
+  }
+  *task_count = count;
+  return rc == 1 ? 0 : -1;
+}

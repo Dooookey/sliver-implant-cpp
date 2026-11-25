@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/yamux"
@@ -206,11 +207,133 @@ func issue(ca *x509.Certificate, caKey *ecdsa.PrivateKey, cn string, usage x509.
 	}, nil
 }
 
+// countField counts length-delimited occurrences of field `want` in a protobuf
+// body (envelopeFields keeps only the last repeated value).
+func countField(body []byte, want uint64) int {
+	n := 0
+	i := 0
+	for i < len(body) {
+		key, l := binary.Uvarint(body[i:])
+		if l <= 0 {
+			return n
+		}
+		i += l
+		wire := key & 7
+		field := key >> 3
+		switch wire {
+		case 0:
+			_, l2 := binary.Uvarint(body[i:])
+			if l2 <= 0 {
+				return n
+			}
+			i += l2
+		case 2:
+			size, l2 := binary.Uvarint(body[i:])
+			if l2 <= 0 {
+				return n
+			}
+			i += l2 + int(size)
+			if field == want {
+				n++
+			}
+		default:
+			return n
+		}
+	}
+	return n
+}
+
+var beaconTaskInjected int32
+
+// handleBeacon serves the beacon flow: one connection carries either a
+// BeaconRegister(93) or a BeaconTasks(94). On the first empty check-in it hands
+// the implant one `ls` task so the next check-in proves dispatch + result
+// queueing.
+func handleBeacon(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.PrivateKey, serverPub ed25519.PublicKey) {
+	defer conn.Close()
+
+	if tc, ok := conn.(*tls.Conn); ok {
+		if err := tc.Handshake(); err != nil {
+			log.Printf("tls handshake: %v", err)
+			return
+		}
+	}
+	preface := make([]byte, 5)
+	if _, err := io.ReadFull(conn, preface); err != nil || string(preface) != "MUX/1" {
+		log.Printf("bad preface %q: %v", preface, err)
+		return
+	}
+	ycfg := yamux.DefaultConfig()
+	ycfg.LogOutput = io.Discard
+	sess, err := yamux.Server(conn, ycfg)
+	if err != nil {
+		log.Printf("yamux: %v", err)
+		return
+	}
+	defer sess.Close()
+
+	stream, err := sess.AcceptStream()
+	if err != nil {
+		log.Printf("beacon accept: %v", err)
+		return
+	}
+	sig, env, err := readFrame(stream)
+	if err != nil {
+		log.Printf("beacon frame: %v", err)
+		return
+	}
+	if !ed25519.Verify(clientPub, env, sig[10:]) {
+		log.Printf("beacon signature INVALID")
+		return
+	}
+
+	ev, eb := envelopeFields(env)
+	body := eb[3]
+	bv, bb := envelopeFields(body)
+
+	switch ev[2] {
+	case 93: // MsgBeaconRegister
+		name := ""
+		if reg, ok := bb[4]; ok {
+			if _, rbb := envelopeFields(reg); rbb[1] != nil {
+				name = string(rbb[1])
+			}
+		}
+		fmt.Printf("BEACON REGISTER ok: id=%q interval=%d jitter=%d name=%q\n",
+			string(bb[1]), int64(bv[2]), int64(bv[3]), name)
+	case 94: // MsgBeaconTasks
+		tasks := countField(body, 2)
+		fmt.Printf("BEACON CHECKIN ok: tasks=%d\n", tasks)
+		if tasks == 0 && atomic.CompareAndSwapInt32(&beaconTaskInjected, 0, 1) {
+			id := string(bb[1])
+			task := makeEnvelope(7, 5, protoStr(1, "."))
+			var bt []byte
+			bt = append(bt, protoStr(1, id)...)
+			bt = append(bt, appendUvarint(nil, 2<<3|2)...)
+			bt = appendUvarint(bt, uint64(len(task)))
+			bt = append(bt, task...)
+			bt = append(bt, appendUvarint(nil, 3<<3)...)
+			bt = appendUvarint(bt, 1)
+			reply := makeEnvelope(0, 94, bt)
+			if rs, rerr := sess.OpenStream(); rerr == nil {
+				_ = writeFrame(rs, rawSignature(serverPriv, serverPub, reply), reply)
+				_ = rs.Close()
+				fmt.Printf("BEACON TASK sent: type=5 id=7\n")
+			} else {
+				log.Printf("beacon reply stream: %v", rerr)
+			}
+		}
+	default:
+		fmt.Printf("BEACON unexpected type=%d\n", ev[2])
+	}
+}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:9446", "listen address")
 	agePriv := flag.String("age-priv", "", "age private key string the implant uses")
 	outDir := flag.String("out", "build/mtls-fixtures", "fixture directory")
 	emptyCA := flag.Bool("empty-ca", false, "generate the CA with an empty subject/issuer (Sliver style)")
+	beaconMode := flag.Bool("beacon", false, "serve the beacon register/check-in flow instead of the session script")
 	flag.Parse()
 
 	if *agePriv == "" {
@@ -269,7 +392,13 @@ func main() {
 			log.Printf("accept: %v", err)
 			continue
 		}
-		go handle(conn, clientPub, serverPriv, serverPub)
+		go func() {
+			if *beaconMode {
+				handleBeacon(conn, clientPub, serverPriv, serverPub)
+			} else {
+				handle(conn, clientPub, serverPriv, serverPub)
+			}
+		}()
 	}
 }
 
@@ -546,7 +675,7 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 			_ = writeFrame(st, rawSignature(serverPriv, serverPub, env), env)
 		}
 		respText := ""
-		for i := 0; i < 20 && !strings.Contains(respText, "hello-portfwd") ; i++ {
+		for i := 0; i < 20 && !strings.Contains(respText, "hello-portfwd"); i++ {
 			rs, err := sess.AcceptStream()
 			if err != nil {
 				break
@@ -639,11 +768,6 @@ func handle(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519.Priva
 
 }
 
-
-
-
-
-
 // parseLs decodes Ls{Path=1, Exists=2, Files=3 repeat FileInfo{Name=1,...}}.
 func parseLs(body []byte) (string, []string) {
 	path := ""
@@ -691,10 +815,6 @@ func firstN(values []string, n int) []string {
 	}
 	return values[:n]
 }
-
-
-
-
 
 // rpcCall performs one request/response exchange the way the Sliver server does:
 // request on a new stream, response on a new stream, same envelope id.
@@ -758,7 +878,6 @@ func protoStr(field uint64, s string) []byte {
 	return append(out, s...)
 }
 
-
 // countRepeated counts repeated length-delimited fields in a message body.
 func countRepeated(body []byte) int {
 	count := 0
@@ -794,8 +913,6 @@ func countRepeated(body []byte) int {
 	return count
 }
 
-
-
 // rawExchange sends a pre-built envelope and returns the (signed) response.
 func rawExchange(sess *yamux.Session, priv ed25519.PrivateKey, pub, clientPub ed25519.PublicKey,
 	env []byte) (map[uint64]uint64, []byte, error) {
@@ -823,8 +940,6 @@ func rawExchange(sess *yamux.Session, priv ed25519.PrivateKey, pub, clientPub ed
 	return v, resp, nil
 }
 
-
-
 func protoStrBytes(field uint64, data []byte) []byte {
 	out := appendUvarint(nil, field<<3|2)
 	out = appendUvarint(out, uint64(len(data)))
@@ -846,10 +961,6 @@ func firstByte(b []byte) int {
 	return int(b[0])
 }
 
-
-
-
-
 func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	env := appendUvarint(nil, 1<<3)
 	env = appendUvarint(env, id)
@@ -862,22 +973,6 @@ func makeEnvelope(id, typ uint64, payload []byte) []byte {
 	}
 	return env
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // startEchoServer runs a tiny HTTP server and returns its address + a stopper.
 func startEchoServer() (string, func()) {
@@ -901,10 +996,3 @@ func startEchoServer() (string, func()) {
 	}()
 	return ln.Addr().String(), func() { _ = ln.Close() }
 }
-
-
-
-
-
-
-

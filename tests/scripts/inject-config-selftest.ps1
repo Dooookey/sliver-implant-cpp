@@ -8,7 +8,10 @@ param(
   [string]$Address = "127.0.0.1",
   [string]$AgePriv = "AGE-SECRET-KEY-1TESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTEST",
   [switch]$Gui,
-  [switch]$EmptyBuildId
+  [switch]$EmptyBuildId,
+  # Beacon flow: the config carries beacon=true + a 5s interval and the peer runs
+  # its register/check-in mode instead of the session script.
+  [switch]$Beacon
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,8 +32,10 @@ try {
 }
 
 Write-Host "==> starting $serverExe on ${Address}:${Port}"
+$peerArgs = @("-addr", "${Address}:${Port}", "-age-priv", $AgePriv, "-out", $fixtures)
+if ($Beacon) { $peerArgs += "-beacon" }
 $server = Start-Process -FilePath $serverExe `
-  -ArgumentList "-addr", "${Address}:${Port}", "-age-priv", $AgePriv, "-out", $fixtures `
+  -ArgumentList $peerArgs `
   -PassThru -NoNewWindow `
   -RedirectStandardOutput (Join-Path $root "build\inject-server.log") `
   -RedirectStandardError (Join-Path $root "build\inject-server.err")
@@ -47,14 +52,13 @@ try {
     name                   = "injected-implant"
     build_id               = $(if ($EmptyBuildId) { "" } else { "inject-selftest" })
     strategy               = "s"
-    beacon                 = $false
+    beacon                 = [bool]$Beacon
     poll_timeout           = 0
     reconnect_interval_ns  = 60000000000
-    # Must mirror what cppbuild writes for a session build: IsBeacon=false means
-    # BeaconInterval/BeaconJitter are zero. A non-zero value here hid the fact
-    # that the implant used to reject session configs ("beacon interval must be
-    # positive").
-    beacon_interval_ns     = 0
+    # Must mirror what cppbuild writes: a session build gets 0, a beacon build
+    # gets the chosen interval. The implant validates the interval only for
+    # beacon builds.
+    beacon_interval_ns     = $(if ($Beacon) { 5000000000 } else { 0 })
     beacon_jitter_ns       = 0
     max_connection_errors  = 1000
     features               = @{ mtls = $true; http = $false; dns = $false; wg = $false; pivot = $false }
@@ -100,10 +104,11 @@ try {
     param($path)
     & $path 2>&1
   } -ArgumentList $exe
-  if (Wait-Job -Job $job -Timeout 150) {
+  $runSeconds = if ($Beacon) { 40 } else { 150 }
+  if (Wait-Job -Job $job -Timeout $runSeconds) {
     Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
   } else {
-    Write-Host "    (implant still running after 150s - stopping it)"
+    Write-Host "    (implant still running after ${runSeconds}s - stopping it)"
     Stop-Job -Job $job
     Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
   }
@@ -133,11 +138,34 @@ try {
 }
 
 Start-Sleep -Milliseconds 300
-Get-Content (Join-Path $root "build\inject-server.log") -ErrorAction SilentlyContinue | Write-Host
+$serverLog = Join-Path $root "build\inject-server.log"
+Get-Content $serverLog -ErrorAction SilentlyContinue | Write-Host
 Get-Content (Join-Path $root "build\inject-server.err") -ErrorAction SilentlyContinue | Write-Host
 
+if ($Beacon) {
+  # Beacon regression net: registration must reach the peer, and a task handed to
+  # the implant must come back as a result on a later check-in.
+  $log = Get-Content $serverLog -Raw -ErrorAction SilentlyContinue
+  if ($log -notmatch "BEACON REGISTER ok") {
+    $rc = 1
+    Write-Host "    MISSING: BEACON REGISTER ok"
+  }
+  if ($log -notmatch "BEACON CHECKIN ok") {
+    $rc = 1
+    Write-Host "    MISSING: BEACON CHECKIN ok"
+  }
+  if ($log -notmatch "BEACON CHECKIN ok: tasks=1") {
+    $rc = 1
+    Write-Host "    MISSING: BEACON CHECKIN ok: tasks=1 (task dispatch/result queue)"
+  }
+}
+
 if ($rc -ne 0) { throw "injected-config selftest failed (exit $rc)" }
-Write-Host "==> injected-config selftest passed (no arguments, config baked in)"
+if ($Beacon) {
+  Write-Host "==> injected-config beacon selftest passed (register + checkin + result)"
+} else {
+  Write-Host "==> injected-config selftest passed (no arguments, config baked in)"
+}
 
 
 

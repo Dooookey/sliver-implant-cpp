@@ -140,6 +140,7 @@ if(IMPLANT_CRYPTO)
     src/wire/yamux.c
     src/modes/session.c
     src/modes/implant.c
+    src/modes/beacon.c
     src/rpc/dispatch.c
     src/modes/shell.c
     src/modes/portfwd.c)
@@ -208,6 +209,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 
