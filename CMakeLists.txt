@@ -135,6 +135,7 @@ if(IMPLANT_CRYPTO)
   list(APPEND SLIVER_CORE_SOURCES
     src/transport/tls_client.c
     src/transport/transport.c
+    src/transport/channel_mtls.c
     src/wire/frame.c
     src/wire/yamux.c
     src/modes/session.c
@@ -207,6 +208,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 
