@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "sliver-implant-dev",
   "build_id": "dev-local",
   "strategy": "s",
@@ -17,6 +17,28 @@
     "username": "",
     "file_exists": "",
     "locale": ""
+  },
+  "http": {
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "nonce_query_arg_chars": "abcdef0123456789",
+    "nonce_query_arg_length": 6,
+    "nonce_mode": "query",
+    "headers": [
+      { "method": "GET", "name": "Accept", "value": "text/html", "probability": 100 },
+      { "method": "POST", "name": "Content-Type", "value": "application/octet-stream", "probability": 100 }
+    ],
+    "url_parameters": [
+      { "method": "GET", "name": "session", "value": "abc123", "probability": 100 }
+    ],
+    "path_segments": [
+      { "is_file": false, "value": "api" },
+      { "is_file": true, "value": "index" }
+    ],
+    "extensions": [ "php", "jsp" ],
+    "min_path_length": 3,
+    "max_path_length": 8,
+    "min_file_gen": 1,
+    "max_file_gen": 4
   },
   "secrets": {
     "peer_public_key": "",

@@ -146,7 +146,8 @@ if(IMPLANT_CRYPTO)
     src/modes/portfwd.c)
 endif()
 
-add_library(sliver_core STATIC ${SLIVER_CORE_SOURCES} "${SLIVER_GEN_DIR}/implant_secrets.c")
+add_library(sliver_core STATIC ${SLIVER_CORE_SOURCES} "${SLIVER_GEN_DIR}/implant_secrets.c"
+    "${SLIVER_GEN_DIR}/implant_http_c2.c")
 target_include_directories(sliver_core
   PUBLIC  "${CMAKE_CURRENT_LIST_DIR}/include"
   PRIVATE "${SLIVER_GEN_DIR}")
@@ -209,6 +210,7 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
 
 
 

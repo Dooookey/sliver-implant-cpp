@@ -65,6 +65,45 @@ size_t sliver_config_secret_length(sliver_secret_id_t id);
  * and writes a human readable reason into err (if err != NULL). */
 int sliver_config_self_check(char *err, size_t err_len);
 
+/* --- HTTP(S) C2 profile ------------------------------------------------
+ * The server already serialises the operator's C2 profile into config.json
+ * ("http" object). These accessors expose it to the future POLL channel without
+ * changing anything today: no runtime code reads them yet, so session and
+ * beacon behaviour is untouched.
+ *
+ * All returned pointers stay valid for the process lifetime. */
+typedef struct {
+  const char *method; /* "GET" / "POST" */
+  const char *name;
+  const char *value;
+  int probability;
+} sliver_http_header_t;
+
+typedef struct {
+  int is_file;
+  const char *value;
+} sliver_http_path_seg_t;
+
+typedef struct {
+  int present; /* 0 when the build carries no HTTP profile */
+  const char *user_agent;
+  const char *nonce_query_arg_chars;
+  int nonce_query_arg_len;
+  const char *nonce_mode;
+  int min_path_length;
+  int max_path_length;
+  int min_file_gen;
+  int max_file_gen;
+} sliver_http_c2_t;
+
+/* Returns 1 and fills out when an HTTP profile is embedded, 0 otherwise. */
+int sliver_config_http_c2(sliver_http_c2_t *out);
+/* Each returns the array (never NULL) and stores the element count in *count. */
+const sliver_http_header_t *sliver_config_http_headers(size_t *count);
+const sliver_http_header_t *sliver_config_http_url_parameters(size_t *count);
+const char *const *sliver_config_http_extensions(size_t *count);
+const sliver_http_path_seg_t *sliver_config_http_path_segments(size_t *count);
+
 #ifdef __cplusplus
 }
 #endif

@@ -37,6 +37,32 @@ int main(void) {
    * mirrors the session shape, so this also pins the self_check regression. */
   CHECK(!sliver_config_is_beacon() || sliver_config_beacon_interval_ns() > 0,
         "beacon builds need a positive interval");
+
+  /* HTTP(S) C2 profile accessors (data only; no runtime consumer yet). */
+  {
+    sliver_http_c2_t h;
+    size_t n = 0;
+    const sliver_http_header_t *hdrs;
+    CHECK(sliver_config_http_c2(&h) == 1, "http profile must be present in dev.json");
+    CHECK(h.present == 1, "http present flag");
+    CHECK(h.user_agent != NULL && h.user_agent[0] != '\0', "http user agent");
+    CHECK(h.nonce_query_arg_len > 0, "http nonce length");
+    CHECK(h.max_path_length >= h.min_path_length, "http path length range");
+    hdrs = sliver_config_http_headers(&n);
+    CHECK(hdrs != NULL && n == 2, "http headers count");
+    CHECK(n == 0 || (hdrs[0].method != NULL && hdrs[0].name != NULL),
+          "http header fields");
+    (void)sliver_config_http_url_parameters(&n);
+    CHECK(n == 1, "http url parameters count");
+    (void)sliver_config_http_extensions(&n);
+    CHECK(n == 2, "http extensions count");
+    {
+      const sliver_http_path_seg_t *segs = sliver_config_http_path_segments(&n);
+      CHECK(segs != NULL && n == 2, "http path segments count");
+      CHECK(n < 2 || (segs[0].is_file == 0 && segs[1].is_file == 1),
+            "http path segment is_file flags");
+    }
+  }
   CHECK(sliver_config_max_connection_errors() > 0, "max connection errors positive");
 
   err[0] = '\0';

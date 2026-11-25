@@ -67,6 +67,29 @@ try {
       domain_joined = $false; datetime = ""; hostname = ""; username = ""
       file_exists = ""; locale = ""
     }
+    # Mirrors the "http" object server/cppbuild writes from the C2 profile. The
+    # implant exposes it through sliver_config_http_* (no runtime consumer yet).
+    http                   = @{
+      user_agent             = "sliver-selftest/1.0"
+      nonce_query_arg_chars  = "abcdef"
+      nonce_query_arg_length = 4
+      nonce_mode             = "query"
+      headers                = @(
+        @{ method = "GET"; name = "Accept"; value = "*/*"; probability = 100 }
+      )
+      url_parameters         = @(
+        @{ method = "GET"; name = "n"; value = "1"; probability = 100 }
+      )
+      path_segments          = @(
+        @{ is_file = $false; value = "api" },
+        @{ is_file = $true; value = "index" }
+      )
+      extensions             = @("php")
+      min_path_length        = 2
+      max_path_length        = 6
+      min_file_gen           = 1
+      max_file_gen           = 3
+    }
     secrets                = @{
       peer_public_key           = "age1selftest"
       peer_private_key          = $AgePriv

@@ -32,8 +32,7 @@ long long sliver_config_poll_timeout_ns(void) { return SLIVER_POLL_TIMEOUT_NS; }
 int sliver_config_is_beacon(void) { return SLIVER_IS_BEACON; }
 
 int sliver_config_feature_mtls(void) { return SLIVER_FEATURE_MTLS; }
-int sliver_config_feature_http(void) { return SLIVER_FEATURE_HTTP; }
-int sliver_config_feature_dns(void) { return SLIVER_FEATURE_DNS; }
+int sliver_config_feature_http(void) { return SLIVER_FEATURE_HTTP; }int sliver_config_feature_dns(void) { return SLIVER_FEATURE_DNS; }
 int sliver_config_feature_wg(void) { return SLIVER_FEATURE_WG; }
 int sliver_config_feature_pivot(void) { return SLIVER_FEATURE_PIVOT; }
 
@@ -98,4 +97,63 @@ int sliver_config_self_check(char *err, size_t err_len) {
     return -1;
   }
   return 0;
+}
+
+/* --- HTTP(S) C2 profile accessors ---------------------------------------- */
+/* Arrays are defined by the generated implant_http_c2.c. */
+extern const sliver_http_header_t sliver_http_headers[];
+extern const size_t sliver_http_header_count;
+extern const sliver_http_header_t sliver_http_url_parameters[];
+extern const size_t sliver_http_url_parameter_count;
+extern const char *const sliver_http_extensions[];
+extern const size_t sliver_http_extension_count;
+extern const sliver_http_path_seg_t sliver_http_path_segments[];
+extern const size_t sliver_http_path_segment_count;
+
+int sliver_config_http_c2(sliver_http_c2_t *out) {
+  if (out == NULL) {
+    return 0;
+  }
+  memset(out, 0, sizeof(*out));
+  if (!SLIVER_HTTP_C2_PRESENT) {
+    return 0;
+  }
+  out->present = 1;
+  out->user_agent = SLIVER_HTTP_UA;
+  out->nonce_query_arg_chars = SLIVER_HTTP_NONCE_CHARS;
+  out->nonce_query_arg_len = (int)SLIVER_HTTP_NONCE_LEN;
+  out->nonce_mode = SLIVER_HTTP_NONCE_MODE;
+  out->min_path_length = (int)SLIVER_HTTP_MIN_PATH_LENGTH;
+  out->max_path_length = (int)SLIVER_HTTP_MAX_PATH_LENGTH;
+  out->min_file_gen = (int)SLIVER_HTTP_MIN_FILE_GEN;
+  out->max_file_gen = (int)SLIVER_HTTP_MAX_FILE_GEN;
+  return 1;
+}
+
+const sliver_http_header_t *sliver_config_http_headers(size_t *count) {
+  if (count != NULL) {
+    *count = sliver_http_header_count;
+  }
+  return sliver_http_headers;
+}
+
+const sliver_http_header_t *sliver_config_http_url_parameters(size_t *count) {
+  if (count != NULL) {
+    *count = sliver_http_url_parameter_count;
+  }
+  return sliver_http_url_parameters;
+}
+
+const char *const *sliver_config_http_extensions(size_t *count) {
+  if (count != NULL) {
+    *count = sliver_http_extension_count;
+  }
+  return sliver_http_extensions;
+}
+
+const sliver_http_path_seg_t *sliver_config_http_path_segments(size_t *count) {
+  if (count != NULL) {
+    *count = sliver_http_path_segment_count;
+  }
+  return sliver_http_path_segments;
 }
