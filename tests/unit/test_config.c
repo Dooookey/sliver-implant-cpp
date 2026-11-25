@@ -32,7 +32,11 @@ int main(void) {
   CHECK(sliver_config_c2_url(sliver_config_c2_count()) == NULL,
         "out of range c2 index must return NULL");
   CHECK(sliver_config_reconnect_interval_ns() > 0, "reconnect interval positive");
-  CHECK(sliver_config_beacon_interval_ns() > 0, "beacon interval positive");
+  /* Session builds carry a zero beacon interval (the server writes 0 when
+   * IsBeacon is false); only beacon builds require a positive one. dev.json
+   * mirrors the session shape, so this also pins the self_check regression. */
+  CHECK(!sliver_config_is_beacon() || sliver_config_beacon_interval_ns() > 0,
+        "beacon builds need a positive interval");
   CHECK(sliver_config_max_connection_errors() > 0, "max connection errors positive");
 
   err[0] = '\0';

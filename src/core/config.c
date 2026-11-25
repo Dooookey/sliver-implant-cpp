@@ -82,7 +82,10 @@ int sliver_config_self_check(char *err, size_t err_len) {
     set_err(err, err_len, "reconnect interval must be positive");
     return -1;
   }
-  if (sliver_config_beacon_interval_ns() <= 0) {
+  /* Beacon timing only matters for beacon builds. A session build legitimately
+   * carries beacon_interval_ns = 0 (the server writes 0 when IsBeacon is false),
+   * so validating it unconditionally rejected every session implant. */
+  if (sliver_config_is_beacon() && sliver_config_beacon_interval_ns() <= 0) {
     set_err(err, err_len, "beacon interval must be positive");
     return -1;
   }

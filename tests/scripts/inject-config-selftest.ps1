@@ -50,7 +50,11 @@ try {
     beacon                 = $false
     poll_timeout           = 0
     reconnect_interval_ns  = 60000000000
-    beacon_interval_ns     = 60000000000
+    # Must mirror what cppbuild writes for a session build: IsBeacon=false means
+    # BeaconInterval/BeaconJitter are zero. A non-zero value here hid the fact
+    # that the implant used to reject session configs ("beacon interval must be
+    # positive").
+    beacon_interval_ns     = 0
     beacon_jitter_ns       = 0
     max_connection_errors  = 1000
     features               = @{ mtls = $true; http = $false; dns = $false; wg = $false; pivot = $false }
