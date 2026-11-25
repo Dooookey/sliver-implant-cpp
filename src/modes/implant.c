@@ -28,19 +28,23 @@ int sliver_session_config_build(sliver_session_config_t *cfg, char *host_buf,
     LOG_ERROR("config: no C2 endpoint injected");
     return -1;
   }
-  if (strncmp(c2, "mtls://", 7) != 0) {
-    LOG_ERROR("config: transport %s is not implemented yet (only mtls://)", c2);
+  if (strncmp(c2, "mtls://", 7) != 0 && strncmp(c2, "http://", 7) != 0 &&
+      strncmp(c2, "https://", 8) != 0) {
+    LOG_ERROR("config: transport %s is not implemented yet (mtls, http)", c2);
     return -1;
   }
-  host_part = c2 + 7;
-  colon = strrchr(host_part, ':');
-  if (colon == NULL) {
-    LOG_ERROR("config: mtls endpoint has no port: %s", c2);
-    return -1;
+  host_part = strstr(c2, "://") + 3;
+  {
+    /* Host ends at the first ':' or '/' after the scheme. */
+    const char *end = host_part;
+    while (*end != '\0' && *end != ':' && *end != '/') {
+      end++;
+    }
+    host_len = (size_t)(end - host_part);
+    colon = (*end == ':') ? end : NULL;
   }
-  host_len = (size_t)(colon - host_part);
   if (host_len == 0 || host_len >= host_cap) {
-    LOG_ERROR("config: bad mtls host in %s", c2);
+    LOG_ERROR("config: bad host in %s", c2);
     return -1;
   }
   memcpy(host_buf, host_part, host_len);
@@ -48,7 +52,17 @@ int sliver_session_config_build(sliver_session_config_t *cfg, char *host_buf,
 
   memset(cfg, 0, sizeof(*cfg));
   cfg->host = host_buf;
-  cfg->port = (uint16_t)strtoul(colon + 1, NULL, 10);
+  cfg->url = c2;
+  if (colon != NULL) {
+    cfg->port = (uint16_t)strtoul(colon + 1, NULL, 10);
+  } else if (strncmp(c2, "http://", 7) == 0) {
+    cfg->port = 80;
+  } else if (strncmp(c2, "https://", 8) == 0) {
+    cfg->port = 443;
+  } else {
+    LOG_ERROR("config: mtls endpoint has no port: %s", c2);
+    return -1;
+  }
   cfg->ca_pem = sliver_config_secret(SLIVER_SECRET_MTLS_CA_CERT);
   cfg->cert_pem = sliver_config_secret(SLIVER_SECRET_MTLS_CERT);
   cfg->key_pem = sliver_config_secret(SLIVER_SECRET_MTLS_KEY);

@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -31,6 +32,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -333,12 +335,91 @@ func handleBeacon(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519
 	}
 }
 
+// runHTTP serves the same envelope protocol over plain HTTP: one framed envelope
+// per request body, at most one framed reply in the response body. That is what
+// channel_http.c implements, so this proves the POLL path end to end.
+func runHTTP(addr string, clientPub ed25519.PublicKey, serverPriv ed25519.PrivateKey, serverPub ed25519.PublicKey) {
+	var injected int32
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 3<<20))
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if len(body) == 0 { // poll with nothing to send
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		sig, env, err := readFrame(bytes.NewReader(body))
+		if err != nil {
+			log.Printf("http frame: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if !ed25519.Verify(clientPub, env, sig[10:]) {
+			log.Printf("http signature INVALID")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		ev, eb := envelopeFields(env)
+		switch ev[2] {
+		case 1: // MsgRegister (session)
+			rv, _ := envelopeFields(eb[3])
+			fmt.Printf("HTTP REGISTER ok: name=%q os=%q arch=%q pid=%d c2=%q\n",
+				string(rv[1]), string(rv[7]), string(rv[8]), int64(rv[6]), string(rv[4]))
+		case 93: // MsgBeaconRegister
+			bv, bb := envelopeFields(eb[3])
+			fmt.Printf("HTTP BEACON REGISTER ok: id=%q interval=%d jitter=%d\n",
+				string(bb[1]), int64(bv[2]), int64(bv[3]))
+		case 94: // MsgBeaconTasks
+			_, bb := envelopeFields(eb[3])
+			tasks := countField(eb[3], 2)
+			fmt.Printf("HTTP BEACON CHECKIN ok: tasks=%d\n", tasks)
+			if tasks == 0 && atomic.CompareAndSwapInt32(&injected, 0, 1) {
+				id := string(bb[1])
+				task := makeEnvelope(7, 5, protoStr(1, "."))
+				var bt []byte
+				bt = append(bt, protoStr(1, id)...)
+				bt = append(bt, appendUvarint(nil, 2<<3|2)...)
+				bt = appendUvarint(bt, uint64(len(task)))
+				bt = append(bt, task...)
+				bt = append(bt, appendUvarint(nil, 3<<3)...)
+				bt = appendUvarint(bt, 1)
+				reply := makeEnvelope(0, 94, bt)
+				var out bytes.Buffer
+				if err := writeFrame(&out, rawSignature(serverPriv, serverPub, reply), reply); err != nil {
+					log.Printf("http reply frame: %v", err)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/octet-stream")
+				_, _ = w.Write(out.Bytes())
+				fmt.Printf("HTTP TASK sent: type=5 id=7\n")
+				return
+			}
+		default:
+			fmt.Printf("HTTP unexpected type=%d\n", ev[2])
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+
+	fmt.Printf("listening on %s (plain HTTP C2)\n", addr)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", handler)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:9446", "listen address")
 	agePriv := flag.String("age-priv", "", "age private key string the implant uses")
 	outDir := flag.String("out", "build/mtls-fixtures", "fixture directory")
 	emptyCA := flag.Bool("empty-ca", false, "generate the CA with an empty subject/issuer (Sliver style)")
 	beaconMode := flag.Bool("beacon", false, "serve the beacon register/check-in flow instead of the session script")
+	httpMode := flag.Bool("http", false, "serve the C2 protocol over plain HTTP instead of mTLS+yamux")
 	flag.Parse()
 
 	if *agePriv == "" {
@@ -373,6 +454,11 @@ func main() {
 		if err := os.WriteFile(filepath.Join(*outDir, name), data, 0o600); err != nil {
 			log.Fatal(err)
 		}
+	}
+
+	if *httpMode {
+		runHTTP(*addr, clientPub, serverPriv, serverPub)
+		return
 	}
 
 	pool := x509.NewCertPool()

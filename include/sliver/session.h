@@ -19,6 +19,9 @@ extern "C" {
 typedef struct {
   const char *host;
   uint16_t port;
+  /* Full C2 URL as injected (e.g. "mtls://h:8888", "http://h:80/x"). Selected by
+   * sliver_channel_dial to pick a channel implementation. */
+  const char *url;
 
   /* mTLS material (PEM), injected at build time in the real implant. */
   const char *ca_pem;

@@ -143,10 +143,11 @@ static void mtls_close(sliver_channel_t *c) {
   }
 }
 
-int sliver_channel_dial(const char *host, uint16_t port, const char *ca_pem,
-                        const char *cert_pem, const char *key_pem,
-                        const char *age_private_key, const char *server_minisign_pubkey,
-                        sliver_channel_t **out, char *err, size_t err_len) {
+int sliver_channel_mtls_dial(const char *host, uint16_t port, const char *ca_pem,
+                             const char *cert_pem, const char *key_pem,
+                             const char *age_private_key,
+                             const char *server_minisign_pubkey, sliver_channel_t **out,
+                             char *err, size_t err_len) {
   sliver_channel_t *c;
   mtls_channel_t *m;
 

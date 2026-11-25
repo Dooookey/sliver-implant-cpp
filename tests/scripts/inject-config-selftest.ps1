@@ -11,7 +11,10 @@ param(
   [switch]$EmptyBuildId,
   # Beacon flow: the config carries beacon=true + a 5s interval and the peer runs
   # its register/check-in mode instead of the session script.
-  [switch]$Beacon
+  [switch]$Beacon,
+  # Plain-HTTP C2 (POLL channel): the peer speaks the same envelope protocol over
+  # HTTP request/response bodies.
+  [switch]$Http
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +37,7 @@ try {
 Write-Host "==> starting $serverExe on ${Address}:${Port}"
 $peerArgs = @("-addr", "${Address}:${Port}", "-age-priv", $AgePriv, "-out", $fixtures)
 if ($Beacon) { $peerArgs += "-beacon" }
+if ($Http) { $peerArgs += "-http" }
 $server = Start-Process -FilePath $serverExe `
   -ArgumentList $peerArgs `
   -PassThru -NoNewWindow `
@@ -61,8 +65,8 @@ try {
     beacon_interval_ns     = $(if ($Beacon) { 5000000000 } else { 0 })
     beacon_jitter_ns       = 0
     max_connection_errors  = 1000
-    features               = @{ mtls = $true; http = $false; dns = $false; wg = $false; pivot = $false }
-    c2                     = @(@{ url = "mtls://${Address}:${Port}" })
+    features               = @{ mtls = (-not $Http); http = [bool]$Http; dns = $false; wg = $false; pivot = $false }
+    c2                     = @(@{ url = $(if ($Http) { "http://${Address}:${Port}/c2" } else { "mtls://${Address}:${Port}" }) })
     limits                 = @{
       domain_joined = $false; datetime = ""; hostname = ""; username = ""
       file_exists = ""; locale = ""
@@ -127,7 +131,7 @@ try {
     param($path)
     & $path 2>&1
   } -ArgumentList $exe
-  $runSeconds = if ($Beacon) { 40 } else { 150 }
+  $runSeconds = if ($Beacon -or $Http) { 40 } else { 150 }
   if (Wait-Job -Job $job -Timeout $runSeconds) {
     Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
   } else {
@@ -169,17 +173,19 @@ if ($Beacon) {
   # Beacon regression net: registration must reach the peer, and a task handed to
   # the implant must come back as a result on a later check-in.
   $log = Get-Content $serverLog -Raw -ErrorAction SilentlyContinue
-  if ($log -notmatch "BEACON REGISTER ok") {
+  $prefix = if ($Http) { "HTTP " } else { "" }
+  if ($log -notmatch "${prefix}BEACON REGISTER ok") {
     $rc = 1
-    Write-Host "    MISSING: BEACON REGISTER ok"
+    Write-Host "    MISSING: ${prefix}BEACON REGISTER ok"
   }
-  if ($log -notmatch "BEACON CHECKIN ok") {
+  if ($log -notmatch "${prefix}BEACON CHECKIN ok") {
     $rc = 1
-    Write-Host "    MISSING: BEACON CHECKIN ok"
+    Write-Host "    MISSING: ${prefix}BEACON CHECKIN ok"
   }
-  if ($log -notmatch "BEACON CHECKIN ok: tasks=2") {
+  $wantTasks = if ($Http) { "tasks=1" } else { "tasks=2" }
+  if ($log -notmatch "${prefix}BEACON CHECKIN ok: $wantTasks") {
     $rc = 1
-    Write-Host "    MISSING: BEACON CHECKIN ok: tasks=2 (ls result + refused shell)" 
+    Write-Host "    MISSING: ${prefix}BEACON CHECKIN ok: $wantTasks (task dispatch/result queue)"
   }
 }
 
