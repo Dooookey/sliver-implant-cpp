@@ -44,6 +44,12 @@ int sliver_http_session_init(sliver_http_session_t *s, const char *host, uint16_
   (void)snprintf(s->base_path, sizeof(s->base_path), "%s",
                  base_path != NULL && base_path[0] != '\0' ? base_path : "/");
   s->poll_timeout_ns = sliver_config_poll_timeout_ns();
+  if (s->poll_timeout_ns <= 0) {
+    /* Default so an idle poll does not spin: the listener answers 204 at once
+     * when it has nothing queued, and without a non-zero timeout the session
+     * loop would issue thousands of requests per minute. */
+    s->poll_timeout_ns = 5000000000LL;
+  }
   return 0;
 }
 

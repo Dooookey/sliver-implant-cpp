@@ -26,7 +26,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 
 	"filippo.io/age"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -201,8 +203,23 @@ func (s *stubState) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Unlock()
 		if task == nil {
-			w.WriteHeader(http.StatusNoContent)
-			return
+			// Emulate the listener's long poll: hold the request until a task shows
+			// up or the deadline passes.
+			deadline := time.Now().Add(stubPollTimeout())
+			for task == nil && time.Now().Before(deadline) {
+				time.Sleep(50 * time.Millisecond)
+				s.mu.Lock()
+				if len(s.queued) > 0 {
+					task = s.queued[0]
+					s.queued = s.queued[1:]
+				}
+				s.mu.Unlock()
+			}
+			if task == nil {
+				w.WriteHeader(http.StatusNoContent)
+				fmt.Printf("STUB POLL idle\n")
+				return
+			}
 		}
 		ct, err := stubEncrypt(sess.key, task)
 		if err != nil {
@@ -217,6 +234,16 @@ func (s *stubState) handle(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func stubPollTimeout() time.Duration {
+	ms := 5000
+	if v := os.Getenv("STUB_POLL_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ms = n
+		}
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 func runStub() {
