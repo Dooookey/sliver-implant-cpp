@@ -1,4 +1,4 @@
-﻿/* src/transport/http_session.c - Sliver HTTP(S) C2 session layer (H3).
+/* src/transport/http_session.c - Sliver HTTP(S) C2 session layer (H3).
  *
  * The real listener does not accept bare envelopes: it authenticates a session
  * cookie, decodes the body with a nonce-selected encoder and decrypts it with the
@@ -416,7 +416,23 @@ int sliver_http_session_recv(sliver_http_session_t *s, sliver_buf_t *env_out) {
     free(resp);
     rc = sliver_cipher_decrypt(s->key, decoded, decoded_len, &env_out->data, &env_out->len);
     if (rc != 0) {
-      LOG_WARN("http-c2: poll body failed to decrypt (%u bytes)", (unsigned)decoded_len);
+      /* Server payloads look like cryptography.CipherContext.Decrypt inputs: a
+       * 74 byte minisign header followed by nonce||AEAD (that function strips
+       * exactly 74 bytes before decrypting). Retry past the signature. */
+      const size_t k_sig_len = 74;
+      if (decoded_len > k_sig_len + 12 + 16) {
+        rc = sliver_cipher_decrypt(s->key, decoded + k_sig_len, decoded_len - k_sig_len,
+                                   &env_out->data, &env_out->len);
+        if (rc == 0) {
+          LOG_DEBUG("http-c2: poll body decrypted after skipping the %u byte signature",
+                    (unsigned)k_sig_len);
+        } else {
+          LOG_WARN("http-c2: poll body failed to decrypt (%u bytes, also after the signature)",
+                   (unsigned)decoded_len);
+        }
+      } else {
+        LOG_WARN("http-c2: poll body failed to decrypt (%u bytes)", (unsigned)decoded_len);
+      }
     }
     free(decoded);
     return rc == 0 ? 0 : -1;
