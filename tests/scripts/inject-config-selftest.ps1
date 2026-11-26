@@ -186,6 +186,18 @@ if ($Beacon) {
     Write-Host "    MISSING: ${prefix}BEACON CHECKIN ok"
   }
   $wantTasks = if ($Http -or $Https) { "tasks=1" } else { "tasks=2" }
+  if ($Http -or $Https) {
+    # Profile-driven request shape: random path segments + file with extension +
+    # url parameter + nonce, and the profile User-Agent.
+    if ($log -notmatch 'HTTP REQ path="/api[^"]*index\.php\?n=1&_=') {
+      $rc = 1
+      Write-Host "    MISSING: profile-driven request path (api segments + index.php + n=1 + nonce)"
+    }
+    if ($log -notmatch 'ua="sliver-selftest/1\.0"') {
+      $rc = 1
+      Write-Host "    MISSING: profile User-Agent"
+    }
+  }
   if ($log -notmatch "${prefix}BEACON CHECKIN ok: $wantTasks") {
     $rc = 1
     Write-Host "    MISSING: ${prefix}BEACON CHECKIN ok: $wantTasks (task dispatch/result queue)"

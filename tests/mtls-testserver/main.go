@@ -342,6 +342,7 @@ func runHTTP(addr, certDir string, useTLS bool, clientPub ed25519.PublicKey, ser
 	var injected int32
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
+		fmt.Printf("HTTP REQ path=%q ua=%q\n", r.URL.RequestURI(), r.Header.Get("User-Agent"))
 		body, err := io.ReadAll(io.LimitReader(r.Body, 3<<20))
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
