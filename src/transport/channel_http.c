@@ -1,4 +1,4 @@
-﻿/* src/transport/channel_http.c - POLL channel over HTTP(S)/1.1.
+/* src/transport/channel_http.c - POLL channel over HTTP(S)/1.1.
  *
  * One request carries one signed envelope; the response body carries at most one
  * reply envelope. That is how Sliver's HTTP transport behaves, so a scheduler
@@ -253,10 +253,12 @@ static void http_build_request(http_channel_t *h, char *target, size_t target_ca
       const char *file = http_nth_segment(h, 1, http_rnd_below(h, file_segments));
       const char *ext = h->ext_count > 0 ? h->exts[http_rnd_below(h, (unsigned)h->ext_count)]
                                          : NULL;
+      /* Match httpclient.randomPath exactly: the file segment is only appended
+       * when an extension was picked. Profiles list an empty extension on
+       * purpose (e.g. ["js", "", "php"]) to sometimes emit no file at all;
+       * emitting "file" without a dot would not match the server's route. */
       if (file != NULL && ext != NULL && ext[0] != '\0') {
         used += (size_t)snprintf(target + used, target_cap - used, "%s.%s", file, ext);
-      } else if (file != NULL) {
-        used += (size_t)snprintf(target + used, target_cap - used, "%s", file);
       }
     }
     if (used > 1 && target[used - 1] == '/') {
