@@ -1,4 +1,4 @@
-/* sliver/crypto.h - cryptographic primitives used by the implant runtime.
+﻿/* sliver/crypto.h - cryptographic primitives used by the implant runtime.
  *
  * Backends:
  *   mbedTLS 3.6   TLS 1.3, SHA-256/HMAC/HKDF, ChaCha20-Poly1305, X25519
@@ -89,6 +89,28 @@ int sliver_age_encrypt(const char *recipient_public_key,
 int sliver_age_decrypt(const char *identity,
                        const void *ciphertext, size_t ciphertext_len,
                        unsigned char **out, size_t *out_len);
+
+/* --- gzip (CipherContext payload) -------------------------------------- */
+/* Sliver gzips before encrypting and after decrypting. compress emits a valid
+ * gzip stream with stored blocks; decompress handles the full DEFLATE set.
+ * Caller frees *out. */
+int sliver_gzip_compress(const void *data, size_t len, unsigned char **out,
+                         size_t *out_len);
+int sliver_gzip_decompress(const void *data, size_t len, unsigned char **out,
+                           size_t *out_len, size_t max_out);
+
+/* --- CipherContext frame (Sliver HTTP C2 payload) ---------------------- */
+/* Encrypt = 12 random nonce || ChaCha20-Poly1305(gzip(plaintext)).
+ * Decrypt reverses it. Caller frees *out. */
+int sliver_cipher_encrypt(const unsigned char key[SLIVER_CHACHAPOLY_KEY_LEN],
+                          const void *plaintext, size_t plaintext_len,
+                          unsigned char **out, size_t *out_len);
+int sliver_cipher_decrypt(const unsigned char key[SLIVER_CHACHAPOLY_KEY_LEN],
+                          const void *ciphertext, size_t ciphertext_len,
+                          unsigned char **out, size_t *out_len);
+/* cryptography.deriveKeyFrom(): SHA256 over the source material. */
+int sliver_cipher_derive_key(const void *data, size_t len,
+                             unsigned char out[SLIVER_CHACHAPOLY_KEY_LEN]);
 
 /* --- bech32 (age key strings, not bech32m) ------------------------------ */
 /* Decodes an arbitrary length bech32 payload (checksum verified).

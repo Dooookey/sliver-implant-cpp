@@ -52,6 +52,8 @@ if(IMPLANT_CRYPTO)
     src/crypto/bech32.c
     src/crypto/age.c
     src/crypto/minisign.c
+    src/crypto/gzip.c
+    src/crypto/cipher.c
     third_party/monocypher/monocypher.c
     third_party/ed25519/add_scalar.c
     third_party/ed25519/fe.c
@@ -212,6 +214,8 @@ if(BUILD_TESTING)
 endif()
 
 message(STATUS "sliver_implant: format=${IMPLANT_FORMAT} platform=${SLIVER_PLATFORM_DIR} compiler=${CMAKE_C_COMPILER_ID}")
+
+
 
 
 
