@@ -260,7 +260,8 @@ func main() {
 		}
 	case "keyex-gen":
 		keyexGen(d)
-	case "keyex-check":
+	case "stub":
+		runStub()
 		fail = keyexCheck(d)
 	default:
 		fmt.Println("unknown mode:", mode)
