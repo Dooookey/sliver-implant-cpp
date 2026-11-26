@@ -54,6 +54,7 @@ if(IMPLANT_CRYPTO)
     src/crypto/minisign.c
     src/crypto/gzip.c
     src/crypto/cipher.c
+    src/crypto/age_keyex.c
     third_party/monocypher/monocypher.c
     third_party/ed25519/add_scalar.c
     third_party/ed25519/fe.c

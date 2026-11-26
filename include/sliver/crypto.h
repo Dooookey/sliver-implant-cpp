@@ -1,4 +1,4 @@
-﻿/* sliver/crypto.h - cryptographic primitives used by the implant runtime.
+/* sliver/crypto.h - cryptographic primitives used by the implant runtime.
  *
  * Backends:
  *   mbedTLS 3.6   TLS 1.3, SHA-256/HMAC/HKDF, ChaCha20-Poly1305, X25519
@@ -111,6 +111,19 @@ int sliver_cipher_decrypt(const unsigned char key[SLIVER_CHACHAPOLY_KEY_LEN],
 /* cryptography.deriveKeyFrom(): SHA256 over the source material. */
 int sliver_cipher_derive_key(const void *data, size_t len,
                              unsigned char out[SLIVER_CHACHAPOLY_KEY_LEN]);
+
+/* --- age key exchange (HTTP C2 session init) ---------------------------- */
+/* Builds AgeKeyExToServer(): SHA256(peer.public) || age_encrypt(server.public,
+ * HMAC-SHA256(SHA256(peer.private), plaintext) || plaintext). Caller frees *out. */
+int sliver_age_keyex_to_server(const char *server_age_public, const char *peer_public,
+                               const char *peer_private, const void *plaintext,
+                               size_t plaintext_len, unsigned char **out,
+                               size_t *out_len);
+/* Same, taking the three keys from the injected configuration. */
+int sliver_age_keyex_to_server_config(const void *plaintext, size_t plaintext_len,
+                                      unsigned char **out, size_t *out_len);
+/* Derives the bech32 age1... recipient for an AGE-SECRET-KEY-1... identity. */
+int sliver_age_peer_public(const char *identity, char *out, size_t out_cap);
 
 /* --- bech32 (age key strings, not bech32m) ------------------------------ */
 /* Decodes an arbitrary length bech32 payload (checksum verified).

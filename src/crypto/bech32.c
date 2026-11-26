@@ -117,10 +117,17 @@ int sliver_bech32_decode(const char *str, uint8_t *out, size_t *out_len) {
     data[i] = (uint8_t)idx;
   }
 
+  /* BIP-173 checksum input: the HRP is expanded as its high bits, a zero
+   * separator, then its low bits (bech32_hrp_expand). Feeding the raw ASCII
+   * bytes instead only round-trips with a matching encoder, never with a real
+   * age/GitHub style string. */
   for (size_t i = 0; i < hrp_len; ++i) {
-    chk = bech32_polymod_step(chk) ^ (uint8_t)hrp[i];
+    chk = bech32_polymod_step(chk) ^ (uint8_t)((uint8_t)hrp[i] >> 5);
   }
   chk = bech32_polymod_step(chk);
+  for (size_t i = 0; i < hrp_len; ++i) {
+    chk = bech32_polymod_step(chk) ^ (uint8_t)((uint8_t)hrp[i] & 31u);
+  }
   for (size_t i = 0; i < data_len; ++i) {
     chk = bech32_polymod_step(chk) ^ data[i];
   }
@@ -161,12 +168,17 @@ int sliver_bech32_encode(const char *hrp, const uint8_t *data, size_t data_len,
     out[pos++] = k_charset[data5[i]];
   }
 
-  /* checksum (bech32 is case insensitive: always hash the lower case HRP) */
+  /* checksum (bech32 is case insensitive: always hash the lower case HRP, and
+   * expand it as high bits + zero separator + low bits) */
   for (const char *p = hrp; *p; ++p) {
     char c = (*p >= 'A' && *p <= 'Z') ? (char)(*p - 'A' + 'a') : *p;
-    chk = bech32_polymod_step(chk) ^ (uint8_t)c;
+    chk = bech32_polymod_step(chk) ^ (uint8_t)((uint8_t)c >> 5);
   }
   chk = bech32_polymod_step(chk);
+  for (const char *p = hrp; *p; ++p) {
+    char c = (*p >= 'A' && *p <= 'Z') ? (char)(*p - 'A' + 'a') : *p;
+    chk = bech32_polymod_step(chk) ^ (uint8_t)((uint8_t)c & 31u);
+  }
   for (size_t i = 0; i < data5_len; ++i) {
     chk = bech32_polymod_step(chk) ^ data5[i];
   }

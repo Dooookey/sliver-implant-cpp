@@ -34,4 +34,11 @@ if(IMPLANT_CRYPTO)
     SLIVER_CIPHER_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../build")
   sliver_apply_warnings(test_cipher)
   add_test(NAME cipher_frame COMMAND test_cipher)
+
+  add_executable(test_age_keyex unit/test_age_keyex.c)
+  target_link_libraries(test_age_keyex PRIVATE sliver_core)
+  target_compile_definitions(test_age_keyex PRIVATE
+    SLIVER_KEYEX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../build")
+  sliver_apply_warnings(test_age_keyex)
+  add_test(NAME age_keyex COMMAND test_age_keyex)
 endif()

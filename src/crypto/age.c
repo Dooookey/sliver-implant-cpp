@@ -186,11 +186,13 @@ int sliver_age_encrypt(const char *recipient_public_key,
   if (sliver_x25519_shared(eph_sk, recipient, shared) != 0) {
     goto cleanup;
   }
-  /* age x25519 stanza: salt = recipient_pk || ephemeral_pk, HKDF secret is the
-   * shared secret (ikm) and the salt is the salt (Go: hkdf.New(sha256,
-   * sharedSecret, salt, label)). */
-  memcpy(salt, recipient, 32);
-  memcpy(salt + 32, eph_pk, 32);
+  /* age x25519 stanza (filippo.io/age/x25519.go Wrap):
+   *   salt = ephemeral_pk || recipient_pk
+   *   wrap_key = HKDF-SHA256(ikm=shared_secret, salt, info="age-encryption.org/v1/X25519")
+   * Getting the order wrong produces a stanza the recipient cannot unwrap
+   * ("incorrect identity for recipient block"). */
+  memcpy(salt, eph_pk, 32);
+  memcpy(salt + 32, recipient, 32);
   if (sliver_hkdf_sha256(salt, sizeof(salt), shared, 32, AGE_LABEL, strlen(AGE_LABEL),
                          wrap_key, sizeof(wrap_key)) != 0) {
     goto cleanup;
@@ -334,9 +336,10 @@ int sliver_age_decrypt(const char *identity,
   if (sliver_x25519_shared(sk, eph_pk, shared) != 0) {
     goto cleanup;
   }
-  /* Decrypt side: our key takes the recipient slot (see the encrypt path). */
-  memcpy(salt, our_pk, 32);
-  memcpy(salt + 32, eph_pk, 32);
+  /* Decrypt side must use the same order as the encrypt path:
+   * salt = ephemeral_pk || recipient_pk (our identity plays the recipient). */
+  memcpy(salt, eph_pk, 32);
+  memcpy(salt + 32, our_pk, 32);
   if (sliver_hkdf_sha256(salt, sizeof(salt), shared, 32, AGE_LABEL, strlen(AGE_LABEL),
                          wrap_key, sizeof(wrap_key)) != 0) {
     goto cleanup;
