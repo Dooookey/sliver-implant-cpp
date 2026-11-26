@@ -176,12 +176,19 @@ func (s *stubState) handle(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}
 
+	codec := stubCodecFor(r)
 	if sess == nil {
 		if r.Method != http.MethodPost || len(body) < 40 {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		dec, err := age.Decrypt(bytes.NewReader(append([]byte(ageMsgPrefix), body[32:]...)), s.serverID)
+		decoded, derr := codec.Decode(body)
+		if derr != nil {
+			fmt.Printf("STUB SESSION fail: decode %v\n", derr)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		dec, err := age.Decrypt(bytes.NewReader(append([]byte(ageMsgPrefix), decoded[32:]...)), s.serverID)
 		if err != nil {
 			fmt.Printf("STUB SESSION fail: age %v\n", err)
 			w.WriteHeader(http.StatusNotFound)
@@ -229,14 +236,22 @@ func (s *stubState) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		http.SetCookie(w, &http.Cookie{Name: s.cookie, Value: id, Path: "/"})
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(resp)
+		if enc, eerr := codec.Encode(resp); eerr == nil {
+			_, _ = w.Write(enc)
+		}
 		fmt.Printf("STUB SESSION ok: %s\n", id)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodPost:
-		plaintext, err := stubDecrypt(sess.key, body)
+		raw, derr := codec.Decode(body)
+		if derr != nil {
+			fmt.Printf("STUB POST fail: decode %v\n", derr)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		plaintext, err := stubDecrypt(sess.key, raw)
 		if err != nil {
 			fmt.Printf("STUB POST fail: decrypt %v\n", err)
 			w.WriteHeader(http.StatusNotFound)
@@ -288,8 +303,10 @@ func (s *stubState) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		header := make([]byte, 74) // mirrors the listener's minisign prefix
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(header)
-		_, _ = w.Write(ct)
+		if enc, eerr := codec.Encode(ct); eerr == nil {
+			_, _ = w.Write(header)
+			_, _ = w.Write(enc)
+		}
 		fmt.Printf("STUB POLL ok: %d bytes\n", len(task))
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
