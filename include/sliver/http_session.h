@@ -1,4 +1,4 @@
-/* sliver/http_session.h - Sliver HTTP(S) C2 session layer.
+﻿/* sliver/http_session.h - Sliver HTTP(S) C2 session layer.
  *
  * Wraps the real listener's session handshake (age key exchange -> cookie) and
  * its encoder + CipherContext payload format, so a scheduler can keep using plain
@@ -29,6 +29,7 @@ typedef struct {
   int have_cookie;
   unsigned char key[SLIVER_CHACHAPOLY_KEY_LEN];
   long long poll_timeout_ns;
+  int timeout_ms; /* current request timeout (long poll for GET) */
   int established;
 } sliver_http_session_t;
 
