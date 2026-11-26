@@ -338,7 +338,7 @@ func handleBeacon(conn net.Conn, clientPub ed25519.PublicKey, serverPriv ed25519
 // runHTTP serves the same envelope protocol over plain HTTP: one framed envelope
 // per request body, at most one framed reply in the response body. That is what
 // channel_http.c implements, so this proves the POLL path end to end.
-func runHTTP(addr string, clientPub ed25519.PublicKey, serverPriv ed25519.PrivateKey, serverPub ed25519.PublicKey) {
+func runHTTP(addr, certDir string, useTLS bool, clientPub ed25519.PublicKey, serverPriv ed25519.PrivateKey, serverPub ed25519.PublicKey) {
 	var injected int32
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
@@ -405,9 +405,18 @@ func runHTTP(addr string, clientPub ed25519.PublicKey, serverPriv ed25519.Privat
 		w.WriteHeader(http.StatusNoContent)
 	}
 
-	fmt.Printf("listening on %s (plain HTTP C2)\n", addr)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handler)
+	if useTLS {
+		certFile := filepath.Join(certDir, "server.pem")
+		keyFile := filepath.Join(certDir, "server.key")
+		fmt.Printf("listening on %s (HTTPS C2, fixture certificate)\n", addr)
+		if err := http.ListenAndServeTLS(addr, certFile, keyFile, mux); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	fmt.Printf("listening on %s (plain HTTP C2)\n", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
@@ -420,6 +429,7 @@ func main() {
 	emptyCA := flag.Bool("empty-ca", false, "generate the CA with an empty subject/issuer (Sliver style)")
 	beaconMode := flag.Bool("beacon", false, "serve the beacon register/check-in flow instead of the session script")
 	httpMode := flag.Bool("http", false, "serve the C2 protocol over plain HTTP instead of mTLS+yamux")
+	httpsMode := flag.Bool("https", false, "serve the C2 protocol over HTTPS (fixture certificate)")
 	flag.Parse()
 
 	if *agePriv == "" {
@@ -456,8 +466,8 @@ func main() {
 		}
 	}
 
-	if *httpMode {
-		runHTTP(*addr, clientPub, serverPriv, serverPub)
+	if *httpMode || *httpsMode {
+		runHTTP(*addr, *outDir, *httpsMode, clientPub, serverPriv, serverPub)
 		return
 	}
 

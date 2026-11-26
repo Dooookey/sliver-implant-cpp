@@ -1,4 +1,4 @@
-# inject-config-selftest.ps1 - prove that generate-cpp style config injection
+﻿# inject-config-selftest.ps1 - prove that generate-cpp style config injection
 # produces a self-contained implant: config.json -> implant_secrets.c -> the
 # binary connects with NO command line arguments.
 #
@@ -14,7 +14,9 @@ param(
   [switch]$Beacon,
   # Plain-HTTP C2 (POLL channel): the peer speaks the same envelope protocol over
   # HTTP request/response bodies.
-  [switch]$Http
+  [switch]$Http,
+  # HTTPS C2 (TLS without client certs / without verification, like the Go implant).
+  [switch]$Https
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +40,7 @@ Write-Host "==> starting $serverExe on ${Address}:${Port}"
 $peerArgs = @("-addr", "${Address}:${Port}", "-age-priv", $AgePriv, "-out", $fixtures)
 if ($Beacon) { $peerArgs += "-beacon" }
 if ($Http) { $peerArgs += "-http" }
+if ($Https) { $peerArgs += "-http", "-https" }
 $server = Start-Process -FilePath $serverExe `
   -ArgumentList $peerArgs `
   -PassThru -NoNewWindow `
@@ -65,8 +68,8 @@ try {
     beacon_interval_ns     = $(if ($Beacon) { 5000000000 } else { 0 })
     beacon_jitter_ns       = 0
     max_connection_errors  = 1000
-    features               = @{ mtls = (-not $Http); http = [bool]$Http; dns = $false; wg = $false; pivot = $false }
-    c2                     = @(@{ url = $(if ($Http) { "http://${Address}:${Port}/c2" } else { "mtls://${Address}:${Port}" }) })
+    features               = @{ mtls = (-not ($Http -or $Https)); http = [bool]($Http -or $Https); dns = $false; wg = $false; pivot = $false }
+    c2                     = @(@{ url = $(if ($Https) { "https://${Address}:${Port}/c2" } elseif ($Http) { "http://${Address}:${Port}/c2" } else { "mtls://${Address}:${Port}" }) })
     limits                 = @{
       domain_joined = $false; datetime = ""; hostname = ""; username = ""
       file_exists = ""; locale = ""
@@ -131,7 +134,7 @@ try {
     param($path)
     & $path 2>&1
   } -ArgumentList $exe
-  $runSeconds = if ($Beacon -or $Http) { 40 } else { 150 }
+  $runSeconds = if ($Beacon -or $Http -or $Https) { 40 } else { 150 }
   if (Wait-Job -Job $job -Timeout $runSeconds) {
     Receive-Job -Job $job | ForEach-Object { Write-Host $_ }
   } else {
@@ -173,7 +176,7 @@ if ($Beacon) {
   # Beacon regression net: registration must reach the peer, and a task handed to
   # the implant must come back as a result on a later check-in.
   $log = Get-Content $serverLog -Raw -ErrorAction SilentlyContinue
-  $prefix = if ($Http) { "HTTP " } else { "" }
+  $prefix = if ($Http -or $Https) { "HTTP " } else { "" }
   if ($log -notmatch "${prefix}BEACON REGISTER ok") {
     $rc = 1
     Write-Host "    MISSING: ${prefix}BEACON REGISTER ok"
@@ -182,7 +185,7 @@ if ($Beacon) {
     $rc = 1
     Write-Host "    MISSING: ${prefix}BEACON CHECKIN ok"
   }
-  $wantTasks = if ($Http) { "tasks=1" } else { "tasks=2" }
+  $wantTasks = if ($Http -or $Https) { "tasks=1" } else { "tasks=2" }
   if ($log -notmatch "${prefix}BEACON CHECKIN ok: $wantTasks") {
     $rc = 1
     Write-Host "    MISSING: ${prefix}BEACON CHECKIN ok: $wantTasks (task dispatch/result queue)"

@@ -280,13 +280,14 @@ static void tls_free(sliver_tls_t *conn) {
   free(conn);
 }
 
-int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
-                       const char *ca_pem, const char *cert_pem, const char *key_pem,
-                       char *err, size_t err_len) {
+static int tls_connect_impl(sliver_tls_t **out, const char *host, uint16_t port,
+                            const char *ca_pem, const char *cert_pem, const char *key_pem,
+                            int insecure, char *err, size_t err_len) {
   sliver_tls_t *conn;
   int rc;
 
-  if (out == NULL || host == NULL || ca_pem == NULL || cert_pem == NULL || key_pem == NULL) {
+  if (out == NULL || host == NULL ||
+      (!insecure && (ca_pem == NULL || cert_pem == NULL || key_pem == NULL))) {
     set_err(err, err_len, "tls: missing arguments");
     return -1;
   }
@@ -318,7 +319,7 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
     tls_free(conn);
     return -1;
   }
-  {
+  if (!insecure) {
     char *ca = normalize_pem(ca_pem);
     char *cert = normalize_pem(cert_pem);
     char *key = normalize_pem(key_pem);
@@ -390,18 +391,29 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
     return -1;
   }
 
-  /* TLS 1.3 only, like the Sliver server. */
-  (void)mbedtls_ssl_conf_min_tls_version(&conn->conf, MBEDTLS_SSL_VERSION_TLS1_3);
-  (void)mbedtls_ssl_conf_max_tls_version(&conn->conf, MBEDTLS_SSL_VERSION_TLS1_3);
+  if (insecure) {
+    /* HTTP(S) C2: match Sliver's Go implant, which sets InsecureSkipVerify for
+     * the HTTP layer ("we don't care about the HTTP(S) layer certs"). The
+     * envelope signature is the real authentication. Accept TLS 1.2+ so plain
+     * net/http servers work too. */
+    (void)mbedtls_ssl_conf_min_tls_version(&conn->conf, MBEDTLS_SSL_VERSION_TLS1_2);
+    mbedtls_ssl_conf_authmode(&conn->conf, MBEDTLS_SSL_VERIFY_NONE);
+  } else {
+    /* TLS 1.3 only, like the Sliver server. */
+    (void)mbedtls_ssl_conf_min_tls_version(&conn->conf, MBEDTLS_SSL_VERSION_TLS1_3);
+    (void)mbedtls_ssl_conf_max_tls_version(&conn->conf, MBEDTLS_SSL_VERSION_TLS1_3);
+  }
 
   mbedtls_ssl_conf_rng(&conn->conf, mbedtls_ctr_drbg_random, &conn->drbg);
-  mbedtls_ssl_conf_ca_chain(&conn->conf, &conn->ca, NULL);
-  mbedtls_ssl_conf_authmode(&conn->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-  mbedtls_ssl_conf_verify(&conn->conf, verify_chain_only, &conn->ca);
-  if ((rc = mbedtls_ssl_conf_own_cert(&conn->conf, &conn->cert, &conn->key)) != 0) {
-    set_err(err, err_len, "tls: conf_own_cert failed");
-    tls_free(conn);
-    return -1;
+  if (!insecure) {
+    mbedtls_ssl_conf_ca_chain(&conn->conf, &conn->ca, NULL);
+    mbedtls_ssl_conf_authmode(&conn->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_verify(&conn->conf, verify_chain_only, &conn->ca);
+    if ((rc = mbedtls_ssl_conf_own_cert(&conn->conf, &conn->cert, &conn->key)) != 0) {
+      set_err(err, err_len, "tls: conf_own_cert failed");
+      tls_free(conn);
+      return -1;
+    }
   }
 
   if ((rc = mbedtls_ssl_setup(&conn->ssl, &conn->conf)) != 0) {
@@ -455,6 +467,17 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
   }
   *out = conn;
   return 0;
+}
+
+int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
+                       const char *ca_pem, const char *cert_pem, const char *key_pem,
+                       char *err, size_t err_len) {
+  return tls_connect_impl(out, host, port, ca_pem, cert_pem, key_pem, 0, err, err_len);
+}
+
+int sliver_tls_connect_plain(sliver_tls_t **out, const char *host, uint16_t port,
+                             char *err, size_t err_len) {
+  return tls_connect_impl(out, host, port, NULL, NULL, NULL, 1, err, err_len);
 }
 
 long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len) {

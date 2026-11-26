@@ -30,18 +30,9 @@ int sliver_channel_dial(const char *c2_url, const char *host, uint16_t port,
                                     age_private_key, server_minisign_pubkey, out, err,
                                     err_len);
   }
-  if (strncmp(c2_url, "http://", 7) == 0) {
+  if (strncmp(c2_url, "http://", 7) == 0 || strncmp(c2_url, "https://", 8) == 0) {
     return sliver_channel_http_dial(c2_url, age_private_key, server_minisign_pubkey, out,
                                    err, err_len);
-  }
-  if (strncmp(c2_url, "https://", 8) == 0) {
-    /* Reserved: the POLL plumbing is in place but the TLS client for HTTP C2 is
-     * not written yet. Fail loudly instead of silently falling back. */
-    if (err != NULL && err_len != 0) {
-      (void)snprintf(err, err_len, "%s",
-                     "https:// is not implemented yet (use http:// or mtls://)");
-    }
-    return -1;
   }
 
   if (err != NULL && err_len != 0) {
