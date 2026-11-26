@@ -28,6 +28,9 @@ typedef struct {
   char cookie_value[128];
   int have_cookie;
   unsigned char key[SLIVER_CHACHAPOLY_KEY_LEN];
+  /* Encoder selected by the URL nonce (EncoderFromNonce id). Keeping it in the
+   * session means send and recv always agree on the same codec. */
+  sliver_encoder_kind_t enc;
   long long poll_timeout_ns;
   int timeout_ms; /* current request timeout (long poll for GET) */
   int established;

