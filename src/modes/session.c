@@ -140,8 +140,16 @@ int sliver_session_run(const sliver_session_config_t *cfg) {
   char err[256];
   int rc = -1;
 
-  if (cfg == NULL || cfg->host == NULL || cfg->ca_pem == NULL ||
-      cfg->age_private_key == NULL || cfg->server_minisign_pubkey == NULL) {
+  /* Only the signing material is universal: an http(s):// build carries no mTLS
+   * certificates, so requiring them here silently aborted every HTTP session. */
+  if (cfg == NULL || cfg->host == NULL || cfg->age_private_key == NULL ||
+      cfg->server_minisign_pubkey == NULL) {
+    LOG_ERROR("session: incomplete configuration (host/signing material missing)");
+    return -1;
+  }
+  if (cfg->url != NULL && strncmp(cfg->url, "mtls://", 7) == 0 &&
+      (cfg->ca_pem == NULL || cfg->cert_pem == NULL || cfg->key_pem == NULL)) {
+    LOG_ERROR("session: mTLS material missing for mtls:// endpoint");
     return -1;
   }
 
