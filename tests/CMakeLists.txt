@@ -41,4 +41,11 @@ if(IMPLANT_CRYPTO)
     SLIVER_KEYEX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../build")
   sliver_apply_warnings(test_age_keyex)
   add_test(NAME age_keyex COMMAND test_age_keyex)
+
+  add_executable(test_encoders unit/test_encoders.c)
+  target_link_libraries(test_encoders PRIVATE sliver_core)
+  target_compile_definitions(test_encoders PRIVATE
+    SLIVER_ENCODER_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../build")
+  sliver_apply_warnings(test_encoders)
+  add_test(NAME encoders COMMAND test_encoders)
 endif()

@@ -1,4 +1,4 @@
-/* sliver/config.h - build-time configuration accessors.
+﻿/* sliver/config.h - build-time configuration accessors.
  *
  * The generated header (implant_build_config.h) and translation unit
  * (implant_secrets.c) are produced by cmake/SliverConfigGen.cmake from the
@@ -9,6 +9,8 @@
 #define SLIVER_CONFIG_H
 
 #include <stddef.h>
+
+#include "sliver/crypto.h" /* sliver_encoder_kind_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +66,13 @@ size_t sliver_config_secret_length(sliver_secret_id_t id);
 /* Returns 0 when the injected configuration is self-consistent, -1 otherwise
  * and writes a human readable reason into err (if err != NULL). */
 int sliver_config_self_check(char *err, size_t err_len);
+
+/* --- encoder ids (HTTP C2) ----------------------------------------------
+ * server/encoders assigns these per database and templates them into the Go
+ * implant; the C build embeds the same values so it can reproduce
+ * encoders.EncoderFromNonce (nonce % 65537 -> encoder). 0 means "not embedded".
+ * sliver_encoder_kind_t lives in crypto.h. */
+unsigned long long sliver_config_encoder_id(sliver_encoder_kind_t kind);
 
 /* --- HTTP(S) C2 profile ------------------------------------------------
  * The server already serialises the operator's C2 profile into config.json

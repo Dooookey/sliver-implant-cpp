@@ -13,6 +13,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Encoder kinds (HTTP C2). Declared here so the crypto API does not have to pull
+ * in the whole configuration header; config.h exposes the ids for them. */
+typedef enum {
+  SLIVER_ENCODER_NOP = 0,
+  SLIVER_ENCODER_BASE64,
+  SLIVER_ENCODER_BASE58,
+  SLIVER_ENCODER_BASE32,
+  SLIVER_ENCODER_HEX,
+  SLIVER_ENCODER_ENGLISH,
+  SLIVER_ENCODER_GZIP,
+  SLIVER_ENCODER_PNG
+} sliver_encoder_kind_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -124,6 +137,16 @@ int sliver_age_keyex_to_server_config(const void *plaintext, size_t plaintext_le
                                       unsigned char **out, size_t *out_len);
 /* Derives the bech32 age1... recipient for an AGE-SECRET-KEY-1... identity. */
 int sliver_age_peer_public(const char *identity, char *out, size_t out_cap);
+
+/* --- encoders (HTTP C2) ------------------------------------------------ */
+int sliver_encoder_from_nonce(unsigned long long nonce, sliver_encoder_kind_t *out,
+                              unsigned long long *id_out);
+int sliver_encoder_pick_nonce(sliver_encoder_kind_t kind, unsigned long long *nonce);
+int sliver_encoder_encode(sliver_encoder_kind_t kind, const void *data, size_t len,
+                          unsigned char **out, size_t *out_len);
+int sliver_encoder_decode(sliver_encoder_kind_t kind, const void *data, size_t len,
+                          unsigned char **out, size_t *out_len);
+const char *sliver_encoder_kind_name(sliver_encoder_kind_t kind);
 
 /* --- bech32 (age key strings, not bech32m) ------------------------------ */
 /* Decodes an arbitrary length bech32 payload (checksum verified).

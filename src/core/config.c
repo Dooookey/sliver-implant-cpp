@@ -157,3 +157,25 @@ const sliver_http_path_seg_t *sliver_config_http_path_segments(size_t *count) {
   }
   return sliver_http_path_segments;
 }
+
+/* --- encoder ids (HTTP C2) ----------------------------------------------- */
+unsigned long long sliver_config_encoder_id(sliver_encoder_kind_t kind) {
+  switch (kind) {
+    case SLIVER_ENCODER_BASE64:
+      return SLIVER_ENCODER_ID_BASE64;
+    case SLIVER_ENCODER_BASE58:
+      return SLIVER_ENCODER_ID_BASE58;
+    case SLIVER_ENCODER_BASE32:
+      return SLIVER_ENCODER_ID_BASE32;
+    case SLIVER_ENCODER_HEX:
+      return SLIVER_ENCODER_ID_HEX;
+    case SLIVER_ENCODER_ENGLISH:
+      return SLIVER_ENCODER_ID_ENGLISH;
+    case SLIVER_ENCODER_GZIP:
+      return SLIVER_ENCODER_ID_GZIP;
+    case SLIVER_ENCODER_PNG:
+      return SLIVER_ENCODER_ID_PNG;
+    default:
+      return 0;
+  }
+}
