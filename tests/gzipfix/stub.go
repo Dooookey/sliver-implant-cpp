@@ -113,6 +113,59 @@ func stubInitKey(msg []byte) ([]byte, error) {
 	return msg[i : i+int(l)], nil
 }
 
+// stubEnvelope extracts Envelope{ID=1, Type=2} with a minimal varint walk.
+func stubEnvelope(b []byte) (id, typ uint64, ok bool) {
+	i := 0
+	for i < len(b) {
+		key, n := uvarint2(b[i:])
+		if n <= 0 {
+			return 0, 0, false
+		}
+		i += n
+		field := key >> 3
+		wire := key & 7
+		if wire == 0 {
+			v, n2 := uvarint2(b[i:])
+			if n2 <= 0 {
+				return 0, 0, false
+			}
+			i += n2
+			switch field {
+			case 1:
+				id = v
+			case 2:
+				typ = v
+			}
+			continue
+		}
+		if wire == 2 {
+			l, n2 := uvarint2(b[i:])
+			if n2 <= 0 || int(l)+i+n2 > len(b) {
+				return 0, 0, false
+			}
+			i += n2 + int(l)
+			continue
+		}
+		return 0, 0, false
+	}
+	return id, typ, true
+}
+
+func uvarint2(b []byte) (uint64, int) {
+	var v uint64
+	var shift uint
+	for i := 0; i < len(b); i++ {
+		v |= uint64(b[i]&0x7f) << shift
+		if b[i] < 0x80 {
+			return v, i + 1
+		}
+		shift += 7
+		if shift > 63 {
+			return 0, -1
+		}
+	}
+	return 0, -1
+}
 func (s *stubState) handle(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 
@@ -193,6 +246,13 @@ func (s *stubState) handle(w http.ResponseWriter, r *http.Request) {
 		s.sawPost++
 		s.mu.Unlock()
 		fmt.Printf("STUB POST ok: %d bytes\n", len(plaintext))
+		if id, typ, ok := stubEnvelope(plaintext); ok && typ != 0 {
+			if typ == 6 { // MsgLs
+				fmt.Printf("STUB RESULT ok: type=%d id=%d\n", typ, id)
+			} else {
+				fmt.Printf("STUB ENVELOPE ok: type=%d id=%d\n", typ, id)
+			}
+		}
 		w.WriteHeader(http.StatusAccepted)
 	case http.MethodGet:
 		s.mu.Lock()

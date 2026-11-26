@@ -1,4 +1,4 @@
-# http-stub-selftest.ps1 - offline regression for the HTTP C2 protocol.
+﻿# http-stub-selftest.ps1 - offline regression for the HTTP C2 protocol.
 #
 # Starts tests/gzipfix's listener stub (real age exchange + CipherContext +
 # cookie semantics), builds an implant whose HTTP config points at it, runs it and
@@ -35,6 +35,9 @@ $env:STUB_ADDR = "${Address}:${Port}"
 $env:STUB_SERVER_ID = $serverId
 $env:STUB_PEER_ID = $peerId
 $env:STUB_COOKIE = "sid"
+# Queue one Ls request: Envelope{ID=42, Type=5 (LsReq), Data={Path="."}} so the
+# implant has to dispatch it and post the Ls response back.
+$env:STUB_TASK = "082a10051a030a012e"
 $stubLog = Join-Path $build "stub.log"
 $stub = Start-Process -FilePath (Join-Path $build "gzipfix.exe") -ArgumentList "stub" `
   -PassThru -NoNewWindow -RedirectStandardOutput $stubLog `
@@ -100,6 +103,7 @@ try {
   $fail = 0
   if ($log -notmatch "STUB SESSION ok") { Write-Host "    MISSING: STUB SESSION ok"; $fail = 1 }
   if ($log -notmatch "STUB POST ok") { Write-Host "    MISSING: STUB POST ok"; $fail = 1 }
+  if ($log -notmatch "STUB RESULT ok") { Write-Host "    MISSING: STUB RESULT ok (task dispatch + result upload)"; $fail = 1 }
   if ($fail -ne 0) { throw "http stub selftest failed" }
   Write-Host "==> http stub selftest passed (session + authenticated post)"
 } finally {
